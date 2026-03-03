@@ -1,6 +1,7 @@
-import pytest
+from unittest.mock import MagicMock, patch
+
 import numpy as np
-from unittest.mock import patch, MagicMock, PropertyMock
+import pytest
 
 
 @pytest.fixture
@@ -102,7 +103,6 @@ class TestVadOptions:
 
     def test_vad_options_property(self, audio_input, mock_vad_options):
         """Test vad_options property returns VadOptions instance."""
-        from src.audio_input import VadOptions
 
         vad_opts = audio_input.vad_options
 

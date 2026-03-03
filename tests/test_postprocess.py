@@ -1,6 +1,5 @@
-import pytest
-from src.postprocess import normalize_whitespace, trim_repetitions, merge_short_segments
 from src.fusion import TranslatedSegment
+from src.postprocess import merge_short_segments, normalize_whitespace, trim_repetitions
 
 
 class TestNormalizeWhitespace:

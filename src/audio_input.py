@@ -1,14 +1,12 @@
+import logging
+import threading
+from typing import Any, Callable, Optional
+
 import numpy as np
 import sounddevice as sd
-import threading
-from collections import deque
-from typing import Optional, Callable, Any
-import logging
-
 from faster_whisper.vad import VadOptions
 
 from .config import CONFIG
-
 
 logger = logging.getLogger(__name__)
 
@@ -71,9 +69,7 @@ class AudioInput:
                 self._buffer_pos = frames - remaining
 
             if self._buffer_filled < self.buffer_samples:
-                self._buffer_filled = min(
-                    self._buffer_filled + frames, self.buffer_samples
-                )
+                self._buffer_filled = min(self._buffer_filled + frames, self.buffer_samples)
 
         if self._callback:
             try:
@@ -92,11 +88,6 @@ class AudioInput:
         num_samples = int(duration * self.sample_rate)
 
         with self._buffer_lock:
-            if self._buffer_filled < start_samples + num_samples:
-                available = self._buffer_filled
-            else:
-                available = start_samples + num_samples
-
             if start_samples >= self._buffer_filled:
                 return np.zeros(num_samples, dtype=np.float32)
 
@@ -109,9 +100,7 @@ class AudioInput:
 
             part1_len = self.buffer_samples - start_samples
             part2_len = num_samples - part1_len
-            result = np.concatenate(
-                [self._buffer[start_samples:], self._buffer[:part2_len]]
-            )
+            result = np.concatenate([self._buffer[start_samples:], self._buffer[:part2_len]])
             return result
 
     def get_recent_audio(self, duration: float) -> np.ndarray:
@@ -122,9 +111,7 @@ class AudioInput:
                 return self._buffer[: self._buffer_filled].copy()
 
             if self._buffer_pos >= num_samples:
-                return self._buffer[
-                    self._buffer_pos - num_samples : self._buffer_pos
-                ].copy()
+                return self._buffer[self._buffer_pos - num_samples : self._buffer_pos].copy()
             else:
                 part1_len = self.buffer_samples - (num_samples - self._buffer_pos)
                 return np.concatenate(

@@ -45,7 +45,17 @@ To get a HuggingFace token:
 
 ## Usage
 
-### Basic Usage
+### Using the Launcher (Recommended)
+
+The launcher provides environment validation and a user-friendly startup experience:
+
+```bash
+python launcher.py
+```
+
+This will validate your environment, check dependencies, and start the application.
+
+### Basic Usage (Direct)
 
 ```bash
 python main.py
@@ -62,14 +72,29 @@ Options:
   --no-gui           Disable GUI (headless mode)
   --no-diarization   Disable speaker diarization
   --gui-port PORT    GUI server port (default: 5006)
+  --benchmark        Run in benchmark mode (more verbose metrics)
   --log-level LEVEL  Logging level (DEBUG, INFO, WARNING, ERROR)
+```
+
+Launcher options:
+```bash
+python launcher.py --help
+
+Options:
+  --no-gui           Disable GUI
+  --no-diarization   Disable speaker diarization
+  --port PORT        GUI server port (default: 5006)
+  --open-browser     Open browser automatically (default)
+  --no-browser       Don't open browser
+  --skip-models-check Skip model validation
+  --log-level LEVEL  Logging level
 ```
 
 ### Examples
 
-Run with GUI:
+Run with GUI using launcher:
 ```bash
-python main.py --gui-port 5006
+python launcher.py --port 5006
 ```
 
 Run without GUI (headless):
@@ -80,6 +105,11 @@ python main.py --no-gui
 Run without speaker diarization:
 ```bash
 python main.py --no-diarization
+```
+
+Run in benchmark mode for performance metrics:
+```bash
+python main.py --benchmark
 ```
 
 ## GUI Features
@@ -129,6 +159,26 @@ python main.py --no-diarization
                        └─────────────────┘
 ```
 
+## Project Structure
+
+```
+whisperturbo/
+├── main.py              # Main entry point
+├── launcher.py          # Environment validation and launcher
+├── gui.py               # Alternative GUI entry point
+├── download_models.py   # Model download utility
+├── src/
+│   ├── audio_input.py   # Audio capture
+│   ├── whisper_asr.py   # Speech recognition
+│   ├── diarization.py   # Speaker diarization
+│   ├── fusion.py        # Speaker-translation merge
+│   ├── postprocess.py   # Text post-processing
+│   ├── gui.py           # GUI application
+│   └── config.py        # Configuration
+├── tests/               # Unit tests
+└── docs/                # Documentation
+```
+
 ## Configuration
 
 Edit `src/config.py` to customize:
@@ -137,6 +187,8 @@ Edit `src/config.py` to customize:
 - Whisper model and parameters
 - Diarization settings
 - GUI refresh rate
+- Context carry settings
+- VAD parameters
 
 ## Model Details
 
@@ -167,6 +219,10 @@ Edit `src/config.py` to customize:
 ### Diarization fails
 - Ensure HF_TOKEN is set correctly
 - Verify access to pyannote models
+
+### Launcher issues
+- Run `python launcher.py` for detailed environment validation
+- Use `--skip-models-check` if model check fails incorrectly
 
 ## License
 

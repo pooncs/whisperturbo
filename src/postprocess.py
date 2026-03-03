@@ -1,5 +1,5 @@
 import re
-from typing import List
+from collections.abc import Sequence
 
 
 def normalize_whitespace(text: str) -> str:
@@ -20,7 +20,7 @@ def trim_repetitions(text: str) -> str:
     return " ".join(result)
 
 
-def merge_short_segments(segments: List, min_duration: float = 1.0) -> List:
+def merge_short_segments(segments: Sequence, min_duration: float = 1.0) -> Sequence:
     if not segments:
         return segments
 
@@ -36,11 +36,7 @@ def merge_short_segments(segments: List, min_duration: float = 1.0) -> List:
         time_gap = current.start - previous.end
         duration = current.end - current.start
 
-        if (
-            current.speaker == previous.speaker
-            and time_gap < 0.5
-            and duration < min_duration
-        ):
+        if current.speaker == previous.speaker and time_gap < 0.5 and duration < min_duration:
             previous.text = previous.text + " " + current.text
             previous.end = current.end
         else:

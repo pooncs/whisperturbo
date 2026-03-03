@@ -29,9 +29,11 @@ Main configuration is located in `src/config.py`.
 | `WHISPER_NO_SPEECH_THRESHOLD` | float | 0.6 | Probability threshold for no-speech detection |
 | `WHISPER_LOGPROB_THRESHOLD` | float | -1.0 | Log-probability threshold for decoding |
 | `WHISPER_COMPRESSION_RATIO_THRESHOLD` | float | 2.4 | Compression ratio threshold for decoding |
+| `WHISPER_INITIAL_PROMPT` | str | `""` | Initial prompt for context (empty = none) |
 | `ENABLE_CONTEXT_CARRY` | bool | `True` | Whether to carry context across segments |
 | `CONTEXT_MAX_LENGTH` | int | 500 | Max context length (characters) |
 | `CONTEXT_SEGMENT_COUNT` | int | 3 | Number of previous segments to carry |
+| `MIN_PROCESSING_INTERVAL` | float | 2.0 | Minimum seconds between processing cycles |
 
 ### Diarization Settings
 
@@ -57,6 +59,12 @@ Main configuration is located in `src/config.py`.
 | `GUI_MAX_ROWS` | int | 100 | Maximum rows in the display table |
 | `SPEAKER_COLORS` | tuple | (hex colors) | List of colors for speakers |
 
+### Export Settings
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `EXPORT_FORMATS` | tuple | `("csv", "jsonl", "srt")` | Supported export formats |
+
 ### Logging Settings
 
 | Parameter | Type | Default | Description |
@@ -67,8 +75,11 @@ Main configuration is located in `src/config.py`.
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `HF_TOKEN` | Yes | HuggingFace token for diarization model access |
+| `HF_TOKEN` | Yes* | HuggingFace token for diarization model access |
+| `HUGGINGFACE_TOKEN` | No | Alternative token (deprecated) |
 | `CUDA_VISIBLE_DEVICES` | No | GPU device selection |
+
+*Required only if diarization is enabled.
 
 ## Example Configuration
 
@@ -78,10 +89,13 @@ SAMPLE_RATE = 16000
 WHISPER_MODEL = "deepdml/faster-whisper-large-v3-turbo-ct2"
 WHISPER_DEVICE = "cuda"
 WHISPER_COMPUTE_TYPE = "float16"
-GUI_PORT = 5006
+ENABLE_CONTEXT_CARRY = True
+CONTEXT_MAX_LENGTH = 500
 ```
 
 ## Command-Line Options
+
+### main.py Options
 
 Run with `--help` to see all options:
 
@@ -92,5 +106,36 @@ Options:
   --no-gui           Disable GUI (headless mode)
   --no-diarization   Disable speaker diarization
   --gui-port PORT    GUI server port (default: 5006)
+  --benchmark        Run in benchmark mode (more verbose metrics)
   --log-level LEVEL  Logging level (DEBUG, INFO, WARNING, ERROR)
 ```
+
+### launcher.py Options
+
+```bash
+python launcher.py --help
+
+Options:
+  --no-gui           Disable GUI
+  --no-diarization   Disable speaker diarization
+  --port PORT        GUI server port (default: 5006)
+  --open-browser     Open browser automatically (default)
+  --no-browser       Don't open browser
+  --skip-models-check Skip model validation
+  --log-level LEVEL  Logging level
+```
+
+## Export Formats
+
+The system supports three export formats:
+
+### CSV
+Comma-separated values with metadata support. Contains columns: start, end, speaker, text, language, confidence, timestamp.
+
+### JSONL
+JSON Lines format with one JSON object per line. Easy to parse and process programmatically.
+
+### SRT
+SubRip subtitle format with timestamps and optional speaker labels. Compatible with video players.
+
+To export from the GUI, use the export buttons and select your preferred format.

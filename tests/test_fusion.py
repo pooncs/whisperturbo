@@ -1,10 +1,9 @@
-import pytest
-import numpy as np
 import csv
 import json
 import os
 import tempfile
-from unittest.mock import patch, MagicMock
+
+import pytest
 
 
 @pytest.fixture
@@ -61,9 +60,9 @@ class TestFusionWithOffsetTimestamps:
         Mock speaker segments with timestamps [0.0, 25.0] (speaker "SPEAKER_00")
         Assert fusion correctly assigns "SPEAKER_00" to both ASR segments
         """
+        from src.diarization import SpeakerSegment
         from src.fusion import Fusion
         from src.whisper_asr import TranscriptionSegment
-        from src.diarization import SpeakerSegment
 
         fusion = Fusion()
 
@@ -97,9 +96,9 @@ class TestDeduplication:
         Second call to fuse() with overlapping segments [3.0, 8.0], [8.0, 15.0]
         Assert only the new segment [8.0, 15.0] is returned (not [3.0, 8.0] which overlaps with previous)
         """
+        from src.diarization import SpeakerSegment
         from src.fusion import Fusion
         from src.whisper_asr import TranscriptionSegment
-        from src.diarization import SpeakerSegment
 
         fusion = Fusion()
 
@@ -130,9 +129,9 @@ class TestDeduplication:
 
     def test_deduplication_with_epsilon_tolerance(self):
         """Test deduplication uses epsilon tolerance for overlap detection."""
+        from src.diarization import SpeakerSegment
         from src.fusion import Fusion
         from src.whisper_asr import TranscriptionSegment
-        from src.diarization import SpeakerSegment
 
         fusion = Fusion(epsilon=0.1)
 
@@ -155,9 +154,9 @@ class TestDeduplication:
 
     def test_deduplication_allows_adjacent_segments(self):
         """Test deduplication allows segments that end exactly at the boundary."""
+        from src.diarization import SpeakerSegment
         from src.fusion import Fusion
         from src.whisper_asr import TranscriptionSegment
-        from src.diarization import SpeakerSegment
 
         fusion = Fusion(epsilon=0.1)
 
@@ -181,9 +180,9 @@ class TestDeduplication:
 
     def test_clear_resets_deduplication_state(self):
         """Test clear resets _last_emitted_end_time."""
+        from src.diarization import SpeakerSegment
         from src.fusion import Fusion
         from src.whisper_asr import TranscriptionSegment
-        from src.diarization import SpeakerSegment
 
         fusion = Fusion()
 
@@ -207,8 +206,8 @@ class TestCalculateOverlap:
 
     def test_full_overlap(self, fusion):
         """Test _calculate_overlap returns 1.0 for full overlap."""
-        from src.whisper_asr import TranscriptionSegment
         from src.diarization import SpeakerSegment
+        from src.whisper_asr import TranscriptionSegment
 
         asr_seg = TranscriptionSegment(1.0, 3.0, "test", "en")
         speaker_seg = SpeakerSegment(1.0, 3.0, "SPEAKER_00")
@@ -219,8 +218,8 @@ class TestCalculateOverlap:
 
     def test_partial_overlap(self, fusion):
         """Test _calculate_overlap returns correct partial overlap."""
-        from src.whisper_asr import TranscriptionSegment
         from src.diarization import SpeakerSegment
+        from src.whisper_asr import TranscriptionSegment
 
         # ASR: 1.0-4.0 (duration 3.0), Speaker: 2.0-3.0 (duration 1.0)
         # Overlap: 2.0-3.0 (duration 1.0), ratio = 1.0/3.0 = 0.333
@@ -233,8 +232,8 @@ class TestCalculateOverlap:
 
     def test_no_overlap(self, fusion):
         """Test _calculate_overlap returns 0.0 for no overlap."""
-        from src.whisper_asr import TranscriptionSegment
         from src.diarization import SpeakerSegment
+        from src.whisper_asr import TranscriptionSegment
 
         asr_seg = TranscriptionSegment(1.0, 2.0, "test", "en")
         speaker_seg = SpeakerSegment(3.0, 4.0, "SPEAKER_00")
@@ -320,7 +319,6 @@ class TestFuse:
     def test_fuse_skips_empty_text(self, fusion):
         """Test fuse skips segments with empty text."""
         from src.whisper_asr import TranscriptionSegment
-        from src.diarization import SpeakerSegment
 
         asr_segments = [
             TranscriptionSegment(0.0, 1.0, "", "en"),
@@ -422,7 +420,7 @@ class TestExportCSV:
         try:
             fusion.export_csv(filepath)
 
-            with open(filepath, "r", encoding="utf-8") as f:
+            with open(filepath, encoding="utf-8") as f:
                 reader = csv.DictReader(f)
                 rows = list(reader)
 
@@ -448,7 +446,7 @@ class TestExportJSONL:
         try:
             fusion.export_jsonl(filepath)
 
-            with open(filepath, "r", encoding="utf-8") as f:
+            with open(filepath, encoding="utf-8") as f:
                 lines = f.readlines()
 
             assert len(lines) == 3
@@ -474,7 +472,7 @@ class TestExportSRT:
         try:
             fusion.export_srt(filepath)
 
-            with open(filepath, "r", encoding="utf-8") as f:
+            with open(filepath, encoding="utf-8") as f:
                 content = f.read()
 
             assert "1\n" in content
@@ -485,7 +483,6 @@ class TestExportSRT:
 
     def test_export_srt_timestamp_format(self, fusion):
         """Test export_srt formats timestamps correctly."""
-        from src.whisper_asr import TranscriptionSegment
         from src.fusion import TranslatedSegment
 
         # 65.5 seconds = 1 minute 5.5 seconds = 00:01:05,500
@@ -499,7 +496,7 @@ class TestExportSRT:
         try:
             fusion.export_srt(filepath)
 
-            with open(filepath, "r", encoding="utf-8") as f:
+            with open(filepath, encoding="utf-8") as f:
                 content = f.read()
 
             # 65.5 seconds = 00:01:05,500 (1 min, 5.5 sec)

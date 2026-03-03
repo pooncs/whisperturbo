@@ -1,7 +1,5 @@
-import time
-import pytest
-from src.gui import TranslationGUI
 from src.fusion import Fusion
+from src.gui import TranslationGUI
 
 
 def test_gui_refresh_callback_registration():

@@ -2,6 +2,54 @@
 
 ## Common Issues and Solutions
 
+### Launcher Issues
+
+#### Launcher Shows Missing Dependencies
+
+**Symptoms**: Running `python launcher.py` shows missing packages.
+
+**Solutions**:
+1. Install all requirements:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+2. If specific package is missing:
+   ```bash
+   pip install <package-name>
+   ```
+
+3. Use `--skip-models-check` if model check fails incorrectly:
+   ```bash
+   python launcher.py --skip-models-check
+   ```
+
+#### Launcher Browser Doesn't Open
+
+**Symptoms**: GUI starts but browser doesn't open automatically.
+
+**Solutions**:
+1. Manually open http://localhost:5006
+2. Check if default browser is set
+3. Use `--no-browser` flag and open manually
+4. Try a different port: `--port 5007`
+
+#### Launcher Shows "Models Not Found"
+
+**Symptoms**: Warning about missing models even after download.
+
+**Solutions**:
+1. Download models explicitly:
+   ```bash
+   python download_models.py
+   ```
+
+2. Check model cache location:
+   - Windows: `%LOCALAPPDATA%\ctranslate2\models`
+   - Linux/macOS: `~/.cache/ctranslate2/models`
+
+3. Use `--skip-models-check` to bypass validation
+
 ### Audio Issues
 
 #### No Audio Input
@@ -174,6 +222,37 @@
 2. Use larger Whisper model if available
 3. Check audio input quality
 4. Minimize background noise
+5. Enable context carry for better continuity
+
+### Code Quality Checks
+
+#### Ruff Linting
+
+To check code quality with ruff:
+
+```bash
+# Check all files
+ruff check .
+
+# Fix auto-fixable issues
+ruff check . --fix
+
+# Check specific file
+ruff check src/whisper_asr.py
+```
+
+#### Running Tests
+
+```bash
+# Run all tests
+pytest
+
+# Run specific test file
+pytest tests/test_whisper_asr.py
+
+# Run with coverage
+pytest --cov=src
+```
 
 ## Debug Mode
 
@@ -183,6 +262,25 @@ Enable debug logging for more detailed error information:
 python main.py --log-level DEBUG
 ```
 
+Or with the launcher:
+
+```bash
+python launcher.py --log-level DEBUG
+```
+
+## Benchmark Mode
+
+For performance diagnostics, use benchmark mode:
+
+```bash
+python main.py --benchmark
+```
+
+This will display:
+- Per-cycle latency and RTF metrics
+- Aggregate statistics every 5 cycles
+- Total segment counts
+
 ## Getting Help
 
 If you encounter issues not listed here:
@@ -191,3 +289,4 @@ If you encounter issues not listed here:
 2. Review ARCHITECTURE.md for system design
 3. Check CONFIGURATION.md for settings
 4. Enable DEBUG logging for detailed diagnostics
+5. Run launcher.py for environment validation

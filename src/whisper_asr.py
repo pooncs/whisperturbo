@@ -1,16 +1,15 @@
-import time
-import threading
-import numpy as np
-from typing import List, Optional, Generator, Any
-from dataclasses import dataclass
 import logging
+import threading
+import time
+from collections.abc import Generator
+from dataclasses import dataclass
+from typing import Any, Optional
 
+import numpy as np
 from faster_whisper import WhisperModel
-from faster_whisper.transcribe import Segment
 from silero_vad import get_speech_timestamps
 
 from .config import CONFIG
-
 
 logger = logging.getLogger(__name__)
 
@@ -54,21 +53,19 @@ class WhisperASR:
         self._total_processing_time = 0.0
         self._num_transcriptions = 0
 
-        self._previous_text: List[str] = []
+        self._previous_text: list[str] = []
 
     def add_context_text(self, text: str) -> None:
         if not text:
             return
         self._previous_text.append(text)
         max_chars = CONFIG.CONTEXT_MAX_LENGTH
-        while self._get_context_string() > max_chars and len(self._previous_text) > 1:
+        while len(self._get_context_string()) > max_chars and len(self._previous_text) > 1:
             self._previous_text.pop(0)
 
     def _get_context_string(self) -> str:
         segment_count = CONFIG.CONTEXT_SEGMENT_COUNT
-        context_parts = (
-            self._previous_text[-segment_count:] if self._previous_text else []
-        )
+        context_parts = self._previous_text[-segment_count:] if self._previous_text else []
         return " ".join(context_parts)
 
     def _build_initial_prompt(self) -> Optional[str]:
@@ -113,7 +110,7 @@ class WhisperASR:
         window_start_time: Optional[float] = None,
         condition_on_previous_text: bool = False,
         initial_prompt: Optional[str] = None,
-    ) -> List[TranscriptionSegment]:
+    ) -> list[TranscriptionSegment]:
         if not self._is_loaded:
             self.load_model()
 
@@ -151,17 +148,11 @@ class WhisperASR:
                     end=seg_end,
                     text=segment.text.strip(),
                     language=info.language if info.language else self.language,
-                    avg_logprob=(
-                        segment.avg_logprob if hasattr(segment, "avg_logprob") else -1.0
-                    ),
+                    avg_logprob=(segment.avg_logprob if hasattr(segment, "avg_logprob") else -1.0),
                     no_speech_prob=(
-                        segment.no_speech_prob
-                        if hasattr(segment, "no_speech_prob")
-                        else 0.0
+                        segment.no_speech_prob if hasattr(segment, "no_speech_prob") else 0.0
                     ),
-                    audio_time_start=(
-                        seg_start if window_start_time is not None else None
-                    ),
+                    audio_time_start=(seg_start if window_start_time is not None else None),
                     audio_time_end=seg_end if window_start_time is not None else None,
                 )
             )
@@ -187,16 +178,14 @@ class WhisperASR:
         audio: np.ndarray,
         beam_size: int = CONFIG.WHISPER_BEAM_SIZE,
         window_start_time: Optional[float] = None,
-    ) -> List[TranscriptionSegment]:
+    ) -> list[TranscriptionSegment]:
         if not self._is_loaded:
             self.load_model()
 
         with self._processing_lock:
             self._is_processing = True
             try:
-                return self._transcribe_vad_chunks_internal(
-                    audio, beam_size, window_start_time
-                )
+                return self._transcribe_vad_chunks_internal(audio, beam_size, window_start_time)
             finally:
                 self._is_processing = False
 
@@ -205,7 +194,7 @@ class WhisperASR:
         audio: np.ndarray,
         beam_size: int = CONFIG.WHISPER_BEAM_SIZE,
         window_start_time: Optional[float] = None,
-    ) -> List[TranscriptionSegment]:
+    ) -> list[TranscriptionSegment]:
         initial_prompt = self._build_initial_prompt()
         use_context = CONFIG.ENABLE_CONTEXT_CARRY and initial_prompt
 
@@ -269,21 +258,13 @@ class WhisperASR:
                         text=segment.text.strip(),
                         language=info.language if info.language else self.language,
                         avg_logprob=(
-                            segment.avg_logprob
-                            if hasattr(segment, "avg_logprob")
-                            else -1.0
+                            segment.avg_logprob if hasattr(segment, "avg_logprob") else -1.0
                         ),
                         no_speech_prob=(
-                            segment.no_speech_prob
-                            if hasattr(segment, "no_speech_prob")
-                            else 0.0
+                            segment.no_speech_prob if hasattr(segment, "no_speech_prob") else 0.0
                         ),
-                        audio_time_start=(
-                            seg_start if window_start_time is not None else None
-                        ),
-                        audio_time_end=(
-                            seg_end if window_start_time is not None else None
-                        ),
+                        audio_time_start=(seg_start if window_start_time is not None else None),
+                        audio_time_end=(seg_end if window_start_time is not None else None),
                     )
                 )
         # Update stats
@@ -312,8 +293,7 @@ class WhisperASR:
 
         for audio_chunk in audio_generator:
             segments = self.transcribe(audio_chunk, vad_options=vad_options)
-            for segment in segments:
-                yield segment
+            yield from segments
 
     def get_stats(self) -> dict:
         avg_processing_time = (

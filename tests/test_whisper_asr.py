@@ -1,6 +1,7 @@
-import pytest
+from unittest.mock import MagicMock, patch
+
 import numpy as np
-from unittest.mock import patch, MagicMock, PropertyMock
+import pytest
 
 
 @pytest.fixture
@@ -10,7 +11,6 @@ def mock_faster_whisper():
 
     with (
         patch("src.whisper_asr.WhisperModel") as mock_model,
-        patch("src.whisper_asr.Segment") as mock_segment,
     ):
         mock_model_instance = MagicMock()
         mock_model.return_value = mock_model_instance

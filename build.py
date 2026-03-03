@@ -6,9 +6,9 @@ Run with lint: python build.py lint
 """
 
 import os
-import sys
 import shutil
 import subprocess
+import sys
 
 
 def check_pyinstaller():

@@ -3,7 +3,7 @@ pytest configuration and shared fixtures for WhisperTurbo tests.
 """
 
 import sys
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 mock_pyannote = MagicMock()
 sys.modules["pyannote"] = mock_pyannote
@@ -18,8 +18,9 @@ sys.modules["holoviews"] = MagicMock()
 sys.modules["bokeh"] = MagicMock()
 sys.modules["param"] = MagicMock()
 
-import pytest
 from pathlib import Path
+
+import pytest
 
 project_root = Path(__file__).parent.parent
 if str(project_root) not in sys.path:

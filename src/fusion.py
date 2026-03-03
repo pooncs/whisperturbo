@@ -1,12 +1,10 @@
-import time
-from typing import List, Optional, Dict
-from dataclasses import dataclass
 import logging
+from dataclasses import dataclass
+from typing import Optional
 
-from .whisper_asr import TranscriptionSegment
 from .diarization import SpeakerSegment
-from .postprocess import normalize_whitespace, trim_repetitions, merge_short_segments
-
+from .postprocess import merge_short_segments, normalize_whitespace, trim_repetitions
+from .whisper_asr import TranscriptionSegment
 
 logger = logging.getLogger(__name__)
 
@@ -26,8 +24,8 @@ class Fusion:
     def __init__(self, min_overlap: float = 0.3, epsilon: float = 0.1):
         self.min_overlap = min_overlap
         self.epsilon = epsilon
-        self._segments: List[TranslatedSegment] = []
-        self._speaker_history: Dict[str, float] = {}
+        self._segments: list[TranslatedSegment] = []
+        self._speaker_history: dict[str, float] = {}
         self._last_emitted_end_time: float = 0.0
 
     def _calculate_overlap(
@@ -47,7 +45,7 @@ class Fusion:
     def _get_dominant_speaker(
         self,
         asr_segment: TranscriptionSegment,
-        speaker_segments: List[SpeakerSegment],
+        speaker_segments: list[SpeakerSegment],
     ) -> Optional[str]:
         if not speaker_segments:
             return None
@@ -78,10 +76,10 @@ class Fusion:
 
     def fuse(
         self,
-        asr_segments: List[TranscriptionSegment],
-        speaker_segments: List[SpeakerSegment],
+        asr_segments: list[TranscriptionSegment],
+        speaker_segments: list[SpeakerSegment],
         timestamp: float,
-    ) -> List[TranslatedSegment]:
+    ) -> list[TranslatedSegment]:
         fused = []
 
         for asr_seg in asr_segments:
@@ -121,7 +119,7 @@ class Fusion:
 
         return merged
 
-    def get_all_segments(self) -> List[TranslatedSegment]:
+    def get_all_segments(self) -> list[TranslatedSegment]:
         return self._segments.copy()
 
     def clear(self) -> None:
@@ -133,7 +131,7 @@ class Fusion:
         self,
         start: float,
         end: float,
-    ) -> List[TranslatedSegment]:
+    ) -> list[TranslatedSegment]:
         return [seg for seg in self._segments if seg.start >= start and seg.end <= end]
 
     def export_csv(self, filepath: str) -> None:
@@ -220,9 +218,7 @@ class Fusion:
                 f.write(f"# metadata: {json.dumps(metadata, ensure_ascii=False)}\n")
             for i, seg in enumerate(self._segments, 1):
                 f.write(f"{i}\n")
-                f.write(
-                    f"{format_timestamp(seg.start)} --> {format_timestamp(seg.end)}\n"
-                )
+                f.write(f"{format_timestamp(seg.start)} --> {format_timestamp(seg.end)}\n")
                 speaker_prefix = f"[{seg.speaker}] " if seg.speaker else ""
                 f.write(f"{speaker_prefix}{seg.text}\n\n")
 
@@ -241,7 +237,7 @@ class Fusion:
             raise ValueError(f"Unsupported format: {format}")
 
     def get_stats(self) -> dict:
-        speakers = set(seg.speaker for seg in self._segments if seg.speaker)
+        speakers = {seg.speaker for seg in self._segments if seg.speaker}
 
         return {
             "total_segments": len(self._segments),

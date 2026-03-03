@@ -1,17 +1,15 @@
-import time
-import threading
-import numpy as np
-from typing import List, Optional, Dict, Any
-from dataclasses import dataclass
 import logging
 import queue
+import threading
+import time
+from dataclasses import dataclass
+from typing import Optional
 
+import numpy as np
 import torch
 from pyannote.audio import Pipeline
-from pyannote.core import Segment, Annotation
 
 from .config import CONFIG
-
 
 logger = logging.getLogger(__name__)
 
@@ -48,13 +46,13 @@ class DiarizationHandler:
         self._is_processing = False
         self._processing_thread: Optional[threading.Thread] = None
 
-        self._audio_buffer: List[np.ndarray] = []
+        self._audio_buffer: list[np.ndarray] = []
         self._audio_buffer_lock = threading.Lock()
 
         self._last_processed_end = 0.0
-        self._current_speakers: Dict[str, float] = {}
+        self._current_speakers: dict[str, float] = {}
 
-        self._latest_segments: Optional[List[SpeakerSegment]] = None
+        self._latest_segments: Optional[list[SpeakerSegment]] = None
 
     def load_pipeline(self) -> None:
         if self._is_loaded:
@@ -89,16 +87,12 @@ class DiarizationHandler:
             self._is_loaded = False
             logger.info("Diarization pipeline unloaded")
 
-    def _process_window(
-        self, audio: np.ndarray, start_time: float
-    ) -> List[SpeakerSegment]:
+    def _process_window(self, audio: np.ndarray, start_time: float) -> list[SpeakerSegment]:
         if not self._is_loaded:
             self.load_pipeline()
 
         try:
-            diarization = self._pipeline(
-                {"waveform": audio, "sample_rate": CONFIG.SAMPLE_RATE}
-            )
+            diarization = self._pipeline({"waveform": audio, "sample_rate": CONFIG.SAMPLE_RATE})
 
             results = []
             for turn, _, speaker in diarization.itertracks(yield_label=True):
@@ -121,9 +115,7 @@ class DiarizationHandler:
         with self._audio_buffer_lock:
             self._audio_buffer.append(audio)
 
-            total_duration = (
-                sum(len(a) for a in self._audio_buffer) / CONFIG.SAMPLE_RATE
-            )
+            total_duration = sum(len(a) for a in self._audio_buffer) / CONFIG.SAMPLE_RATE
             while total_duration > self.window_size * 2:
                 removed = self._audio_buffer.pop(0)
                 total_duration -= len(removed) / CONFIG.SAMPLE_RATE
@@ -152,13 +144,13 @@ class DiarizationHandler:
         self._processing_thread = threading.Thread(target=_run, daemon=True)
         self._processing_thread.start()
 
-    def get_results(self, timeout: float = 0.1) -> List[SpeakerSegment]:
+    def get_results(self, timeout: float = 0.1) -> list[SpeakerSegment]:
         try:
             return self._result_queue.get(timeout=timeout)
         except queue.Empty:
             return []
 
-    def get_latest_results(self) -> Optional[List[SpeakerSegment]]:
+    def get_latest_results(self) -> Optional[list[SpeakerSegment]]:
         return self._latest_segments
 
     def is_busy(self) -> bool:
@@ -177,7 +169,7 @@ class DiarizationHandler:
         self,
         audio: np.ndarray,
         start_timestamp: float = 0.0,
-    ) -> List[SpeakerSegment]:
+    ) -> list[SpeakerSegment]:
         audio_duration = len(audio) / CONFIG.SAMPLE_RATE
 
         if audio_duration < 3.0:
@@ -191,7 +183,7 @@ class DiarizationHandler:
         self,
         audio_input,
         min_segment_duration: float = 1.0,
-    ) -> List[SpeakerSegment]:
+    ) -> list[SpeakerSegment]:
         current_time = audio_input.get_current_timestamp()
 
         if current_time < self.window_size:

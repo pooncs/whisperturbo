@@ -1,18 +1,16 @@
 #!/usr/bin/env python3
-import os
-import sys
-import time
-import signal
 import argparse
+import os
+import signal
+import sys
 import threading
+import time
 import webbrowser
 from pathlib import Path
 
 try:
-    from rich.console import Console
-
     RICH_AVAILABLE = True
-except:
+except Exception:
     RICH_AVAILABLE = False
 
 PROJECT_ROOT = Path(__file__).parent
@@ -77,9 +75,7 @@ def check_cuda():
                 prop = torch.cuda.get_device_properties(i)
                 device_props.append(f"{prop.name} ({prop.total_memory // (1024**3)}GB)")
             device_info = ", ".join(device_props)
-            print_status(
-                f"CUDA available: {device_count} device(s) - {device_info}", True, 2
-            )
+            print_status(f"CUDA available: {device_count} device(s) - {device_info}", True, 2)
             return True
         else:
             print_warning("CUDA not available - using CPU")
@@ -92,7 +88,7 @@ def check_cuda():
                 9,
             )
             return False
-    except:
+    except Exception:
         print_warning("PyTorch not available for CUDA check")
         return False
 
@@ -108,9 +104,7 @@ def check_audio_devices():
         if input_devices:
             default_input = sd.default.device[0]
             default_name = (
-                devices[default_input]["name"]
-                if default_input < len(devices)
-                else "Unknown"
+                devices[default_input]["name"] if default_input < len(devices) else "Unknown"
             )
             print_status(
                 f"Audio input: {len(input_devices)} device(s) - default: {default_name}",
@@ -123,9 +117,7 @@ def check_audio_devices():
         if output_devices:
             default_output = sd.default.device[1]
             default_name = (
-                devices[default_output]["name"]
-                if default_output < len(devices)
-                else "Unknown"
+                devices[default_output]["name"] if default_output < len(devices) else "Unknown"
             )
             print_status(
                 f"Audio output: {len(output_devices)} device(s) - default: {default_name}",
@@ -154,7 +146,7 @@ def check_dependencies():
     for m, p in required.items():
         try:
             __import__(m)
-        except:
+        except Exception:
             missing.append(p)
     if missing:
         print_status("Missing: " + ",".join(missing), False)
@@ -327,7 +319,7 @@ class WhisperTurboLauncher:
         try:
             while not self._shutdown_event.is_set():
                 time.sleep(0.5)
-        except:
+        except Exception:
             self.shutdown()
         return 0
 
@@ -348,9 +340,7 @@ def parse_args():
     p.add_argument("--open-browser", action="store_true", default=True)
     p.add_argument("--no-browser", action="store_true")
     p.add_argument("--skip-models-check", action="store_true")
-    p.add_argument(
-        "--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"]
-    )
+    p.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     return p.parse_args()
 
 

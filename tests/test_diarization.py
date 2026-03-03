@@ -1,6 +1,7 @@
-import pytest
+from unittest.mock import MagicMock, patch
+
 import numpy as np
-from unittest.mock import patch, MagicMock, PropertyMock
+import pytest
 
 
 @pytest.fixture
@@ -8,8 +9,6 @@ def mock_pyannote():
     """Mock pyannote modules."""
     with (
         patch("src.diarization.Pipeline") as mock_pipeline,
-        patch("src.diarization.Segment") as mock_segment,
-        patch("src.diarization.Annotation") as mock_annotation,
         patch("src.diarization.torch") as mock_torch,
     ):
         mock_pipeline_instance = MagicMock()
@@ -54,9 +53,7 @@ class TestDiarizationHandlerInit:
 
     def test_default_initialization(self, diarization_handler):
         """Test DiarizationHandler initializes with correct default values."""
-        assert (
-            diarization_handler.model_name == "pyannote/speaker-diarization-community-1"
-        )
+        assert diarization_handler.model_name == "pyannote/speaker-diarization-community-1"
         assert diarization_handler.window_size == 15.0
         assert diarization_handler.overlap == 5.0
         assert diarization_handler.hf_token == "test_token"
@@ -115,9 +112,7 @@ class TestDiarizationPipeline:
 
         mock_pyannote["pipeline"].from_pretrained.assert_not_called()
 
-    def test_load_pipeline_moves_to_cuda(
-        self, diarization_handler, mock_pyannote, mock_config
-    ):
+    def test_load_pipeline_moves_to_cuda(self, diarization_handler, mock_pyannote, mock_config):
         """Test load_pipeline moves pipeline to CUDA when configured."""
         diarization_handler.load_pipeline()
 
@@ -184,9 +179,7 @@ class TestDiarizationAsync:
         results = diarization_handler.get_results(timeout=0.1)
         assert isinstance(results, list)
 
-    def test_process_async_updates_latest_segments(
-        self, diarization_handler, mock_pyannote
-    ):
+    def test_process_async_updates_latest_segments(self, diarization_handler, mock_pyannote):
         """Test process_async updates _latest_segments."""
         audio = np.random.rand(16000 * 10).astype(np.float32)
 
@@ -238,7 +231,6 @@ class TestDiarizationAsync:
 
     def test_get_results_empty(self, diarization_handler):
         """Test get_results returns empty list when queue is empty."""
-        import queue
 
         results = diarization_handler.get_results(timeout=0.01)
 
@@ -338,15 +330,11 @@ class TestDiarizationRolling:
 
         assert len(segments) == 0
 
-    def test_diarize_rolling_long_buffer(
-        self, diarization_handler, mock_pyannote, mock_config
-    ):
+    def test_diarize_rolling_long_buffer(self, diarization_handler, mock_pyannote, mock_config):
         """Test diarize_rolling processes when buffer is long enough."""
         audio_input = MagicMock()
         audio_input.get_current_timestamp.return_value = 20.0
-        audio_input.get_audio_window.return_value = np.random.rand(16000 * 15).astype(
-            np.float32
-        )
+        audio_input.get_audio_window.return_value = np.random.rand(16000 * 15).astype(np.float32)
 
         diarization_handler.load_pipeline()
 

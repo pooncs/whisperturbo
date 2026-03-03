@@ -19,7 +19,10 @@ pip install -r requirements.txt
 # Set HuggingFace token (required for speaker diarization)
 set HF_TOKEN=your_huggingface_token
 
-# Run the application
+# Run using the launcher (recommended)
+python launcher.py
+
+# Or run directly
 python main.py
 ```
 
@@ -30,11 +33,13 @@ python main.py
 - **Web GUI**: Real-time visualization with Panel
 - **Export**: CSV, JSONL, and SRT export formats
 - **Low Latency**: < 1 second typical latency
+- **Context Carry**: Maintains context across segments for better translation
+- **Text Post-processing**: Repetition trimming and whitespace normalization
 
 ## Requirements
 
 - Windows 10/11 with NVIDIA GPU (RTX 4090 recommended)
-- CUDA 12.x
+- CUDA 11.8 or 12.x
 - Python 3.10+
 
 ## Project Structure
@@ -42,15 +47,52 @@ python main.py
 ```
 whisperturbo/
 ├── main.py              # Main entry point
-├── gui.py               # GUI application
+├── launcher.py          # Environment validation and launcher
+├── gui.py               # Alternative GUI entry point
+├── download_models.py   # Model download utility
+├── build.py             # Build utilities
+├── runtime_hook.py      # Runtime hooks
+├── init_whisperturbo.py # Initialization script
 ├── src/
-│   ├── audio_input.py   # Audio capture
-│   ├── whisper_asr.py   # Speech recognition
-│   ├── diarization.py  # Speaker diarization
-│   ├── fusion.py       # Speaker-translation merge
-│   └── config.py       # Configuration
+│   ├── __init__.py
+│   ├── audio_input.py   # Audio capture from microphone
+│   ├── whisper_asr.py   # Speech recognition and translation
+│   ├── diarization.py   # Speaker diarization
+│   ├── fusion.py        # Speaker-translation merging
+│   ├── postprocess.py   # Text post-processing utilities
+│   ├── gui.py           # GUI application
+│   └── config.py        # Configuration settings
 ├── tests/               # Unit tests
-└── docs/               # Documentation
+│   ├── conftest.py
+│   ├── test_audio_input.py
+│   ├── test_config.py
+│   ├── test_diarization.py
+│   ├── test_fusion.py
+│   ├── test_gui.py
+│   ├── test_postprocess.py
+│   ├── test_translation_pipeline.py
+│   └── test_whisper_asr.py
+└── docs/                # Documentation
+    ├── README.md
+    ├── ARCHITECTURE.md
+    ├── CONFIGURATION.md
+    └── TROUBLESHOOTING.md
 ```
+
+## Entry Points
+
+### launcher.py (Recommended)
+The launcher provides:
+- Environment validation (Python version, CUDA, audio devices)
+- Dependency checking
+- Model verification
+- Automatic browser opening
+- Colored console output
+
+### main.py
+Direct entry point with full control over all options.
+
+### gui.py
+Standalone GUI entry point.
 
 For more details, see the individual documentation files in this directory.

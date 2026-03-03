@@ -1,9 +1,9 @@
-from .config import CONFIG, Config
 from .audio_input import AudioInput
-from .whisper_asr import WhisperASR, TranscriptionSegment
+from .config import CONFIG, Config
 from .diarization import DiarizationHandler, SpeakerSegment
 from .fusion import Fusion, TranslatedSegment
-from .gui import TranslationGUI, KPIMetrics
+from .gui import KPIMetrics, TranslationGUI
+from .whisper_asr import TranscriptionSegment, WhisperASR
 
 __all__ = [
     "CONFIG",

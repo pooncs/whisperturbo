@@ -4,13 +4,12 @@ Real-Time Speech Translation System
 Korean -> English translation using Faster-Whisper with speaker diarization
 """
 
-import os
-import sys
-import time
-import signal
-import logging
 import argparse
+import logging
+import signal
+import sys
 import threading
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -18,14 +17,12 @@ PROJECT_ROOT = Path(__file__).parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.config import CONFIG
 from src.audio_input import AudioInput
-from src.whisper_asr import WhisperASR
+from src.config import CONFIG
 from src.diarization import DiarizationHandler, SpeakerSegment
 from src.fusion import Fusion
 from src.gui import TranslationGUI
-from typing import List
-
+from src.whisper_asr import WhisperASR
 
 logging.basicConfig(
     level=logging.INFO,
@@ -64,7 +61,7 @@ class TranslationPipeline:
 
         self._diarization_interval = 15.0
         self._last_diarization_time = 0.0
-        self._cached_speaker_segments: List[SpeakerSegment] = []
+        self._cached_speaker_segments: list[SpeakerSegment] = []
 
         self._last_emitted_end_time = 0.0
 
@@ -229,12 +226,9 @@ class TranslationPipeline:
                     CONFIG.DIARIZATION_WINDOW_SIZE
                 )
                 diarization_timestamp = (
-                    self._audio_input.get_current_timestamp()
-                    - CONFIG.DIARIZATION_WINDOW_SIZE
+                    self._audio_input.get_current_timestamp() - CONFIG.DIARIZATION_WINDOW_SIZE
                 )
-                self._diarization.process_async(
-                    audio_for_diarization, diarization_timestamp
-                )
+                self._diarization.process_async(audio_for_diarization, diarization_timestamp)
                 self._last_diarization_time = current_time
 
         # Get latest diarization results from cache
@@ -245,9 +239,7 @@ class TranslationPipeline:
 
         speaker_segments = self._cached_speaker_segments
 
-        fused_segments = self._fusion.fuse(
-            new_asr_segments, speaker_segments, timestamp_start
-        )
+        fused_segments = self._fusion.fuse(new_asr_segments, speaker_segments, timestamp_start)
 
         if fused_segments:
             self._last_emitted_end_time = max(s.end for s in fused_segments)
@@ -279,9 +271,7 @@ class TranslationPipeline:
             logger.debug(log_msg)
 
         if self.benchmark_mode and self._metrics["cycles"] % 5 == 0:
-            avg_latency = sum(self._metrics["latencies"]) / len(
-                self._metrics["latencies"]
-            )
+            avg_latency = sum(self._metrics["latencies"]) / len(self._metrics["latencies"])
             avg_rtf = sum(self._metrics["rtfs"]) / len(self._metrics["rtfs"])
             logger.info(
                 f"BENCHMARK: Avg Latency: {avg_latency:.2f}s, Avg RTF: {avg_rtf:.2f}x, "
@@ -290,9 +280,7 @@ class TranslationPipeline:
 
         if self._gui and fused_segments:
             processing_rate = (
-                len(fused_segments) / self._process_interval
-                if self._process_interval > 0
-                else 0
+                len(fused_segments) / self._process_interval if self._process_interval > 0 else 0
             )
             self._gui.update_kpis(latency_seconds, rtf, processing_rate)
             self._gui.add_segments(fused_segments)
@@ -315,9 +303,7 @@ class TranslationPipeline:
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(
-        description="Real-Time Korean -> English Speech Translation"
-    )
+    parser = argparse.ArgumentParser(description="Real-Time Korean -> English Speech Translation")
     parser.add_argument(
         "--no-gui",
         action="store_true",

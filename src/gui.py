@@ -1,15 +1,14 @@
-import os
-import time
-import threading
-import panel as pn
-import pandas as pd
-from typing import List, Optional, Dict
-from dataclasses import dataclass
 import logging
+import os
+import threading
+import time
+from dataclasses import dataclass
 
-from .fusion import TranslatedSegment, Fusion
+import pandas as pd
+import panel as pn
+
 from .config import CONFIG
-
+from .fusion import Fusion, TranslatedSegment
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +33,7 @@ class TranslationGUI:
         self.pipeline = pipeline
         self.title = title
 
-        self._segments: List[TranslatedSegment] = []
+        self._segments: list[TranslatedSegment] = []
         self._segments_lock = threading.Lock()
 
         self._kpis = KPIMetrics()
@@ -46,7 +45,7 @@ class TranslationGUI:
 
         self._is_running = False
         self._refresh_task = None
-        self.speaker_colors: Dict[str, str] = {}
+        self.speaker_colors: dict[str, str] = {}
         self._paused = False  # To track local state, but actually use pipeline
 
         self._setup_gui()
@@ -82,9 +81,7 @@ class TranslationGUI:
                 self._speakers_pane,
             ),
             pn.Row(
-                pn.pane.Markdown(
-                    "**Processing Rate:**", styles={"font-weight": "bold"}
-                ),
+                pn.pane.Markdown("**Processing Rate:**", styles={"font-weight": "bold"}),
                 self._rate_pane,
             ),
             sizing_mode="stretch_width",
@@ -107,19 +104,11 @@ class TranslationGUI:
         self._export_srt_btn = pn.widgets.Button(
             name="Export SRT", button_type="primary", width=100
         )
-        self._clear_btn = pn.widgets.Button(
-            name="Clear Log", button_type="warning", width=100
-        )
+        self._clear_btn = pn.widgets.Button(name="Clear Log", button_type="warning", width=100)
 
-        self._pause_btn = pn.widgets.Button(
-            name="Pause", button_type="warning", width=100
-        )
-        self._resume_btn = pn.widgets.Button(
-            name="Resume", button_type="success", width=100
-        )
-        self._diarization_toggle = pn.widgets.Checkbox(
-            name="Enable Diarization", value=True
-        )
+        self._pause_btn = pn.widgets.Button(name="Pause", button_type="warning", width=100)
+        self._resume_btn = pn.widgets.Button(name="Resume", button_type="success", width=100)
+        self._diarization_toggle = pn.widgets.Checkbox(name="Enable Diarization", value=True)
 
         self._export_dir_input = pn.widgets.TextInput(
             name="Export Directory", value=os.getcwd(), width=400
@@ -173,9 +162,7 @@ class TranslationGUI:
         self._resume_btn.on_click(self._on_resume)
         self._diarization_toggle.param.watch(self._on_diarization_toggle, "value")
 
-        self._status_pane = pn.pane.Markdown(
-            "**Status:** Ready", styles={"color": "gray"}
-        )
+        self._status_pane = pn.pane.Markdown("**Status:** Ready", styles={"color": "gray"})
 
         self._layout = pn.Column(
             self._title,
@@ -201,7 +188,7 @@ class TranslationGUI:
             if len(self._segments) > CONFIG.GUI_MAX_ROWS * 2:
                 self._segments = self._segments[-CONFIG.GUI_MAX_ROWS :]
 
-    def add_segments(self, segments: List[TranslatedSegment]) -> None:
+    def add_segments(self, segments: list[TranslatedSegment]) -> None:
         with self._segments_lock:
             self._segments.extend(segments)
 
@@ -220,7 +207,7 @@ class TranslationGUI:
             self._kpis.processing_rate = processing_rate
             self._kpis.total_segments = len(self._segments)
 
-            speakers = set(s.speaker for s in self._segments if s.speaker)
+            speakers = {s.speaker for s in self._segments if s.speaker}
             self._kpis.active_speakers = len(speakers)
 
     def _refresh_table(self) -> None:
@@ -252,16 +239,14 @@ class TranslationGUI:
                 )
 
         # Update speaker filter options
-        speakers = sorted(set(s.speaker for s in recent_segments if s.speaker))
+        speakers = sorted({s.speaker for s in recent_segments if s.speaker})
         current_options = list(self._speaker_filter.options)
         if speakers != current_options[1:]:  # Skip "All"
             self._speaker_filter.options = ["All"] + speakers
 
         # Filter data if needed
         if self._speaker_filter.value != "All":
-            filtered_data = [
-                d for d in data if d["Speaker"] == self._speaker_filter.value
-            ]
+            filtered_data = [d for d in data if d["Speaker"] == self._speaker_filter.value]
         else:
             filtered_data = data
 
@@ -378,7 +363,7 @@ class TranslationGUI:
 
     def show(self, port: int = 5006, show: bool = True) -> None:
         self._is_running = True
-        server = pn.serve(
+        pn.serve(
             self._layout,
             port=port,
             show=show,
@@ -387,16 +372,14 @@ class TranslationGUI:
 
     def serve(self, port: int = 5006) -> None:
         self._is_running = True
-        server = pn.serve(
+        pn.serve(
             self._layout,
             port=port,
             show=False,
             title=self.title,
             threaded=True,
         )
-        pn.state.add_periodic_callback(
-            self._refresh_table, period=CONFIG.GUI_REFRESH_RATE / 1000
-        )
+        pn.state.add_periodic_callback(self._refresh_table, period=CONFIG.GUI_REFRESH_RATE / 1000)
         logger.info(f"GUI server started on port {port}")
 
     def get_layout(self):

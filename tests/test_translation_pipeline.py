@@ -1,7 +1,7 @@
-import pytest
-import time
+from unittest.mock import MagicMock, patch
+
 import numpy as np
-from unittest.mock import patch, MagicMock, PropertyMock
+import pytest
 
 
 @pytest.fixture
@@ -253,6 +253,7 @@ class TestProcessAudio:
     def test_benchmark_mode_metrics(self, mock_dependencies, caplog):
         """Test benchmark mode metrics reporting."""
         import logging
+
         from main import TranslationPipeline
 
         pipeline = TranslationPipeline(
@@ -350,7 +351,7 @@ class TestProcessAudio:
 
     def test_process_audio_with_diarization(self, mock_dependencies):
         """Test _process_audio includes diarization when enabled."""
-        from main import TranslationPipeline, CONFIG
+        from main import TranslationPipeline
 
         pipeline = TranslationPipeline(enable_gui=False, enable_diarization=True)
         pipeline._running = True
