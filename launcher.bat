@@ -100,7 +100,9 @@ if "%CUDA_AVAILABLE%"=="True" (
     for /f "tokens=*" %%d in ('%PYTHON_EXE% -c "import torch; print(torch.cuda.get_device_name(0))" 2^>^&1') do set "GPU_NAME=%%d"
     echo     GPU: %GPU_NAME%
 ) else (
-    echo     Running in CPU mode
+    echo     Running in CPU mode.
+    echo     [!] For CUDA 11.8, run:
+    echo         pip install torch==2.1.2+cu118 torchaudio==2.1.2+cu118 --index-url https://download.pytorch.org/whl/cu118
 )
 
 :: Check audio devices

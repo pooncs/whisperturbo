@@ -5,7 +5,7 @@ Real-time Korean → English speech translation system using Faster-Whisper with
 ## Requirements
 
 - Windows 10/11 with NVIDIA GPU (RTX 4090 recommended)
-- CUDA 12.x
+- CUDA 11.8 or 12.x
 - Python 3.10+
 
 ## Installation
@@ -23,9 +23,15 @@ venv\Scripts\activate
 ```
 
 3. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
+   - For **CUDA 12.x** (default):
+     ```bash
+     pip install -r requirements.txt
+     ```
+   - For **CUDA 11.8**:
+     ```bash
+     pip install -r requirements.txt
+     pip install torch==2.1.2+cu118 torchaudio==2.1.2+cu118 --index-url https://download.pytorch.org/whl/cu118
+     ```
 
 4. Set HuggingFace token for speaker diarization:
 ```bash

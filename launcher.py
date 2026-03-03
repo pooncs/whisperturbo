@@ -83,6 +83,14 @@ def check_cuda():
             return True
         else:
             print_warning("CUDA not available - using CPU")
+            print_info("To enable CUDA support (for NVIDIA GPUs):", 4)
+            print_info("1. Ensure NVIDIA drivers are installed (525+)", 6)
+            print_info("2. Install CUDA 11.8 or 12.x", 6)
+            print_info("3. For CUDA 11.8, run:", 6)
+            print_info(
+                "   pip install torch==2.1.2+cu118 torchaudio==2.1.2+cu118 --index-url https://download.pytorch.org/whl/cu118",
+                9,
+            )
             return False
     except:
         print_warning("PyTorch not available for CUDA check")

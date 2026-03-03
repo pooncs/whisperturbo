@@ -44,9 +44,14 @@
    python -c "import torch; print(torch.cuda.is_available())"
    ```
 
-3. Ensure CUDA 12.x is installed
+3. Ensure CUDA 11.8 or 12.x is installed
 
-4. Check NVIDIA driver version (should be 525+)
+4. For CUDA 11.8, install PyTorch with:
+   ```bash
+   pip install torch==2.1.2+cu118 --index-url https://download.pytorch.org/whl/cu118
+   ```
+
+5. Check NVIDIA driver version (should be 525+)
 
 #### Out of Memory
 

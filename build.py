@@ -126,11 +126,14 @@ def main():
     print("Output: dist/WhisperTurbo/")
     print("=" * 40)
     print()
-    print("NOTE: For RTX 4090 CUDA support, ensure:")
+    print("NOTE: For RTX 4090 / CUDA support, ensure:")
     print("  1. NVIDIA Driver 535+ is installed")
-    print("  2. CUDA Toolkit 12.x is installed")
+    print("  2. CUDA Toolkit 11.8 or 12.x is installed")
     print("  3. cuDNN 8.x is installed")
-    print("  4. HF_TOKEN environment variable is set")
+    print(
+        "  4. For CUDA 11.8, install PyTorch with: pip install torch==2.1.2+cu118 --index-url https://download.pytorch.org/whl/cu118"
+    )
+    print("  5. HF_TOKEN environment variable is set")
     print()
     print("Run the application:")
     print("  dist\\WhisperTurbo\\WhisperTurbo.exe")
