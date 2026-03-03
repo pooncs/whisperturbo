@@ -71,7 +71,7 @@ echo [+] Checking dependencies...
 set "MISSING_DEPS="
 %PYTHON_EXE% -c "import faster_whisper" 2>nul || set "MISSING_DEPS=%MISSING_DEPS% faster-whisper"
 %PYTHON_EXE% -c "import sounddevice" 2>nul || set "MISSING_DEPS=%MISSING_DEPS% sounddevice"
-%PYTHON_EXE% -c "import torch" 2>nul || set "MISSING_DEPS% torch"
+%PYTHON_EXE% -c "import torch" 2>nul || set "MISSING_DEPS=%MISSING_DEPS% torch"
 %PYTHON_EXE% -c "import panel" 2>nul || set "MISSING_DEPS=%MISSING_DEPS% panel"
 
 if defined MISSING_DEPS (

@@ -32,6 +32,7 @@ class AudioInput:
         self._buffer_lock = threading.Lock()
         self._buffer_pos = 0
         self._buffer_filled = 0
+        self._total_samples_processed = 0
 
         self._stream: Optional[sd.InputStream] = None
         self._is_running = False
@@ -59,6 +60,7 @@ class AudioInput:
         audio_chunk = indata[:, 0].astype(np.float32)
 
         with self._buffer_lock:
+            self._total_samples_processed += frames
             if self._buffer_pos + frames <= self.buffer_samples:
                 self._buffer[self._buffer_pos : self._buffer_pos + frames] = audio_chunk
                 self._buffer_pos += frames
@@ -168,4 +170,4 @@ class AudioInput:
 
     def get_current_timestamp(self) -> float:
         with self._buffer_lock:
-            return self._buffer_filled / self.sample_rate
+            return self._total_samples_processed / self.sample_rate

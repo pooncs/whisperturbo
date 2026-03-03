@@ -204,7 +204,7 @@ class TestTimestamp:
     def test_get_current_timestamp(self, audio_input):
         """Test get_current_timestamp calculates correctly."""
         with audio_input._buffer_lock:
-            audio_input._buffer_filled = 16000
+            audio_input._total_samples_processed = 16000
 
         timestamp = audio_input.get_current_timestamp()
 

@@ -45,8 +45,161 @@ class TestFusionInit:
     def test_default_initialization(self, fusion):
         """Test Fusion initializes with correct default values."""
         assert fusion.min_overlap == 0.3
+        assert fusion.epsilon == 0.1
         assert fusion._segments == []
         assert fusion._speaker_history == {}
+        assert fusion._last_emitted_end_time == 0.0
+
+
+class TestFusionWithOffsetTimestamps:
+    """Tests for fusion with offset ASR timestamps."""
+
+    def test_fuse_with_offset_timestamps(self):
+        """Test fusion correctly assigns speaker when ASR timestamps are offset.
+
+        Mock ASR segments with timestamps [10.0, 15.0], [15.0, 20.0]
+        Mock speaker segments with timestamps [0.0, 25.0] (speaker "SPEAKER_00")
+        Assert fusion correctly assigns "SPEAKER_00" to both ASR segments
+        """
+        from src.fusion import Fusion
+        from src.whisper_asr import TranscriptionSegment
+        from src.diarization import SpeakerSegment
+
+        fusion = Fusion()
+
+        asr_segments = [
+            TranscriptionSegment(10.0, 15.0, "Hello", "en"),
+            TranscriptionSegment(15.0, 20.0, "World", "en"),
+        ]
+
+        speaker_segments = [
+            SpeakerSegment(0.0, 25.0, "SPEAKER_00", 0.9),
+        ]
+
+        fused = fusion.fuse(asr_segments, speaker_segments, 1000.0)
+
+        assert len(fused) == 2
+        assert fused[0].speaker == "SPEAKER_00"
+        assert fused[1].speaker == "SPEAKER_00"
+        assert fused[0].start == 10.0
+        assert fused[0].end == 15.0
+        assert fused[1].start == 15.0
+        assert fused[1].end == 20.0
+
+
+class TestDeduplication:
+    """Tests for deduplication logic."""
+
+    def test_deduplication_prevents_duplicates(self):
+        """Test dedupe logic prevents emitting the same text twice.
+
+        First call to fuse() returns segments with end times [5.0, 10.0]
+        Second call to fuse() with overlapping segments [3.0, 8.0], [8.0, 15.0]
+        Assert only the new segment [8.0, 15.0] is returned (not [3.0, 8.0] which overlaps with previous)
+        """
+        from src.fusion import Fusion
+        from src.whisper_asr import TranscriptionSegment
+        from src.diarization import SpeakerSegment
+
+        fusion = Fusion()
+
+        asr_segments_1 = [
+            TranscriptionSegment(0.0, 5.0, "First", "en"),
+            TranscriptionSegment(5.0, 10.0, "Second", "en"),
+        ]
+        speaker_segments = [
+            SpeakerSegment(0.0, 15.0, "SPEAKER_00", 0.9),
+        ]
+
+        fused_1 = fusion.fuse(asr_segments_1, speaker_segments, 1000.0)
+
+        assert len(fused_1) == 2
+        assert fusion._last_emitted_end_time == 10.0
+
+        asr_segments_2 = [
+            TranscriptionSegment(3.0, 8.0, "Third", "en"),
+            TranscriptionSegment(8.0, 15.0, "Fourth", "en"),
+        ]
+
+        fused_2 = fusion.fuse(asr_segments_2, speaker_segments, 1000.0)
+
+        assert len(fused_2) == 1
+        assert fused_2[0].text == "Fourth"
+        assert fused_2[0].start == 8.0
+        assert fused_2[0].end == 15.0
+
+    def test_deduplication_with_epsilon_tolerance(self):
+        """Test deduplication uses epsilon tolerance for overlap detection."""
+        from src.fusion import Fusion
+        from src.whisper_asr import TranscriptionSegment
+        from src.diarization import SpeakerSegment
+
+        fusion = Fusion(epsilon=0.1)
+
+        asr_segments_1 = [
+            TranscriptionSegment(0.0, 5.0, "First", "en"),
+        ]
+        speaker_segments = [
+            SpeakerSegment(0.0, 10.0, "SPEAKER_00", 0.9),
+        ]
+
+        fusion.fuse(asr_segments_1, speaker_segments, 1000.0)
+
+        asr_segments_2 = [
+            TranscriptionSegment(4.0, 4.9, "Should be blocked", "en"),
+        ]
+
+        fused_2 = fusion.fuse(asr_segments_2, speaker_segments, 1000.0)
+
+        assert len(fused_2) == 0
+
+    def test_deduplication_allows_adjacent_segments(self):
+        """Test deduplication allows segments that end exactly at the boundary."""
+        from src.fusion import Fusion
+        from src.whisper_asr import TranscriptionSegment
+        from src.diarization import SpeakerSegment
+
+        fusion = Fusion(epsilon=0.1)
+
+        asr_segments_1 = [
+            TranscriptionSegment(0.0, 5.0, "First", "en"),
+        ]
+        speaker_segments = [
+            SpeakerSegment(0.0, 10.0, "SPEAKER_00", 0.9),
+        ]
+
+        fusion.fuse(asr_segments_1, speaker_segments, 1000.0)
+
+        asr_segments_2 = [
+            TranscriptionSegment(5.0, 10.0, "Second", "en"),
+        ]
+
+        fused_2 = fusion.fuse(asr_segments_2, speaker_segments, 1000.0)
+
+        assert len(fused_2) == 1
+        assert fused_2[0].text == "Second"
+
+    def test_clear_resets_deduplication_state(self):
+        """Test clear resets _last_emitted_end_time."""
+        from src.fusion import Fusion
+        from src.whisper_asr import TranscriptionSegment
+        from src.diarization import SpeakerSegment
+
+        fusion = Fusion()
+
+        asr_segments = [
+            TranscriptionSegment(0.0, 5.0, "First", "en"),
+        ]
+        speaker_segments = [
+            SpeakerSegment(0.0, 10.0, "SPEAKER_00", 0.9),
+        ]
+
+        fusion.fuse(asr_segments, speaker_segments, 1000.0)
+        assert fusion._last_emitted_end_time == 5.0
+
+        fusion.clear()
+
+        assert fusion._last_emitted_end_time == 0.0
 
 
 class TestCalculateOverlap:

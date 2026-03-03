@@ -160,6 +160,44 @@ class TestWhisperTranscribe:
         assert stats["num_transcriptions"] == 1
         assert stats["total_processing_time"] > 0
 
+    def test_transcribe_passes_config_thresholds(self, whisper_asr, mock_faster_whisper):
+        """Test transcribe passes hallucination guard thresholds from config."""
+        from src.config import CONFIG
+
+        audio = np.random.rand(16000).astype(np.float32)
+
+        whisper_asr.transcribe(audio)
+
+        mock_faster_whisper["model_instance"].transcribe.assert_called_once()
+        call_kwargs = mock_faster_whisper["model_instance"].transcribe.call_args[1]
+        assert call_kwargs["no_speech_threshold"] == CONFIG.WHISPER_NO_SPEECH_THRESHOLD
+        assert call_kwargs["log_prob_threshold"] == CONFIG.WHISPER_LOGPROB_THRESHOLD
+        assert (
+            call_kwargs["compression_ratio_threshold"] == CONFIG.WHISPER_COMPRESSION_RATIO_THRESHOLD
+        )
+        assert call_kwargs["beam_size"] == CONFIG.WHISPER_BEAM_SIZE
+
+    def test_transcribe_with_context_carry(self, whisper_asr, mock_faster_whisper):
+        """Test transcribe passes initial_prompt when context carry is enabled."""
+        audio = np.random.rand(16000).astype(np.float32)
+        initial_prompt = "previous text"
+
+        whisper_asr.transcribe(
+            audio, condition_on_previous_text=True, initial_prompt=initial_prompt
+        )
+
+        call_kwargs = mock_faster_whisper["model_instance"].transcribe.call_args[1]
+        assert call_kwargs["initial_prompt"] == initial_prompt
+
+    def test_transcribe_without_context_carry(self, whisper_asr, mock_faster_whisper):
+        """Test transcribe does not pass initial_prompt when disabled."""
+        audio = np.random.rand(16000).astype(np.float32)
+
+        whisper_asr.transcribe(audio, condition_on_previous_text=False)
+
+        call_kwargs = mock_faster_whisper["model_instance"].transcribe.call_args[1]
+        assert "initial_prompt" not in call_kwargs
+
 
 class TestWhisperStats:
     """Tests for statistics functionality."""
@@ -256,14 +294,86 @@ class TestWhisperStreaming:
                 yield np.random.rand(16000).astype(np.float32)
 
         mock_faster_whisper["model_instance"].transcribe.return_value = (
-            [
-                MagicMock(
-                    start=0, end=1, text="chunk", avg_logprob=-0.5, no_speech_prob=0.1
-                )
-            ],
+            [MagicMock(start=0, end=1, text="chunk", avg_logprob=-0.5, no_speech_prob=0.1)],
             MagicMock(language="ko"),
         )
 
         segments = list(whisper_asr.transcribe_streaming(audio_generator()))
 
         assert len(segments) > 0
+
+
+class TestWhisperTranscribeVADChunks:
+    """Tests for transcribe_vad_chunks method."""
+
+    def test_transcribe_vad_chunks_with_vad_speech_timestamps(
+        self, whisper_asr, mock_faster_whisper
+    ):
+        """Test transcribe_vad_chunks uses VAD and passes correct parameters."""
+        from unittest.mock import patch
+
+        audio = np.random.rand(16000 * 5).astype(np.float32)
+
+        with patch("src.whisper_asr.get_speech_timestamps") as mock_vad:
+            mock_vad.return_value = [
+                {"start": 0, "end": 1500},
+            ]
+
+            def mock_transcribe_with_vad(*args, **kwargs):
+                return (
+                    [
+                        MagicMock(
+                            start=0.0,
+                            end=1.5,
+                            text="Hello world",
+                            avg_logprob=-0.5,
+                            no_speech_prob=0.1,
+                        )
+                    ],
+                    MagicMock(language="ko"),
+                )
+
+            mock_faster_whisper["model_instance"].transcribe.side_effect = mock_transcribe_with_vad
+
+            with patch.object(
+                whisper_asr, "_build_initial_prompt", return_value="previous context"
+            ):
+                segments = whisper_asr.transcribe_vad_chunks(audio)
+
+            call_kwargs = mock_faster_whisper["model_instance"].transcribe.call_args[1]
+            assert call_kwargs["vad_filter"] is False
+
+    def test_transcribe_vad_chunks_returns_segments(self, whisper_asr, mock_faster_whisper):
+        """Test transcribe_vad_chunks returns TranscriptionSegment objects."""
+        from unittest.mock import patch
+
+        audio = np.random.rand(16000 * 5).astype(np.float32)
+
+        with patch("src.whisper_asr.get_speech_timestamps") as mock_vad:
+            mock_vad.return_value = [
+                {"start": 0, "end": 1500},
+            ]
+
+            def mock_transcribe_with_vad(*args, **kwargs):
+                return (
+                    [
+                        MagicMock(
+                            start=0.0,
+                            end=1.5,
+                            text="Test segment",
+                            avg_logprob=-0.5,
+                            no_speech_prob=0.1,
+                        )
+                    ],
+                    MagicMock(language="ko"),
+                )
+
+            mock_faster_whisper["model_instance"].transcribe.side_effect = mock_transcribe_with_vad
+
+            with patch.object(whisper_asr, "_build_initial_prompt", return_value=None):
+                segments = whisper_asr.transcribe_vad_chunks(audio)
+
+        assert len(segments) == 1
+        assert segments[0].text == "Test segment"
+        assert segments[0].start == 0.0
+        assert segments[0].end == 1.5

@@ -24,6 +24,12 @@ class TestConfig:
         assert config.WHISPER_TASK == "translate"
         assert config.WHISPER_LANGUAGE == "ko"
 
+        assert config.WHISPER_BEAM_SIZE == 5
+        assert config.WHISPER_NO_SPEECH_THRESHOLD == 0.6
+        assert config.WHISPER_LOGPROB_THRESHOLD == -1.0
+        assert config.WHISPER_COMPRESSION_RATIO_THRESHOLD == 2.4
+        assert config.WHISPER_INITIAL_PROMPT == ""
+
         assert config.DIARIZATION_MODEL == "pyannote/speaker-diarization-community-1"
         assert config.DIARIZATION_WINDOW_SIZE == 15.0
         assert config.DIARIZATION_OVERLAP == 5.0

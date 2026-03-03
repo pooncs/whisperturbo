@@ -46,9 +46,35 @@ class WhisperASR:
         self._is_loaded = False
         self._load_lock = threading.Lock()
 
+        self._is_processing = False
+        self._processing_lock = threading.Lock()
+
         self._last_transcription_time = 0.0
+        self._last_finish_time = 0.0
         self._total_processing_time = 0.0
         self._num_transcriptions = 0
+
+        self._previous_text: List[str] = []
+
+    def add_context_text(self, text: str) -> None:
+        if not text:
+            return
+        self._previous_text.append(text)
+        max_chars = CONFIG.CONTEXT_MAX_LENGTH
+        while self._get_context_string() > max_chars and len(self._previous_text) > 1:
+            self._previous_text.pop(0)
+
+    def _get_context_string(self) -> str:
+        segment_count = CONFIG.CONTEXT_SEGMENT_COUNT
+        context_parts = (
+            self._previous_text[-segment_count:] if self._previous_text else []
+        )
+        return " ".join(context_parts)
+
+    def _build_initial_prompt(self) -> Optional[str]:
+        if not CONFIG.ENABLE_CONTEXT_CARRY:
+            return None
+        return self._get_context_string() or None
 
     def load_model(self) -> None:
         if self._is_loaded:
@@ -125,15 +151,17 @@ class WhisperASR:
                     end=seg_end,
                     text=segment.text.strip(),
                     language=info.language if info.language else self.language,
-                    avg_logprob=segment.avg_logprob
-                    if hasattr(segment, "avg_logprob")
-                    else -1.0,
-                    no_speech_prob=segment.no_speech_prob
-                    if hasattr(segment, "no_speech_prob")
-                    else 0.0,
-                    audio_time_start=seg_start
-                    if window_start_time is not None
-                    else None,
+                    avg_logprob=(
+                        segment.avg_logprob if hasattr(segment, "avg_logprob") else -1.0
+                    ),
+                    no_speech_prob=(
+                        segment.no_speech_prob
+                        if hasattr(segment, "no_speech_prob")
+                        else 0.0
+                    ),
+                    audio_time_start=(
+                        seg_start if window_start_time is not None else None
+                    ),
                     audio_time_end=seg_end if window_start_time is not None else None,
                 )
             )
@@ -142,6 +170,7 @@ class WhisperASR:
         self._total_processing_time += processing_time
         self._num_transcriptions += 1
         self._last_transcription_time = processing_time
+        self._last_finish_time = time.time()
 
         audio_duration = len(audio) / CONFIG.SAMPLE_RATE
         rtf = processing_time / audio_duration if audio_duration > 0 else 0
@@ -161,6 +190,24 @@ class WhisperASR:
     ) -> List[TranscriptionSegment]:
         if not self._is_loaded:
             self.load_model()
+
+        with self._processing_lock:
+            self._is_processing = True
+            try:
+                return self._transcribe_vad_chunks_internal(
+                    audio, beam_size, window_start_time
+                )
+            finally:
+                self._is_processing = False
+
+    def _transcribe_vad_chunks_internal(
+        self,
+        audio: np.ndarray,
+        beam_size: int = CONFIG.WHISPER_BEAM_SIZE,
+        window_start_time: Optional[float] = None,
+    ) -> List[TranscriptionSegment]:
+        initial_prompt = self._build_initial_prompt()
+        use_context = CONFIG.ENABLE_CONTEXT_CARRY and initial_prompt
 
         # Get speech timestamps using VAD
         speech_timestamps = get_speech_timestamps(
@@ -189,17 +236,20 @@ class WhisperASR:
 
             # Transcribe this chunk without VAD filter (already filtered)
             start_transcribe = time.time()
-            segments, info = self._model.transcribe(
-                audio_chunk,
-                language=self.language,
-                task=self.task,
-                beam_size=beam_size,
-                vad_filter=False,  # Already filtered
-                word_timestamps=False,
-                no_speech_threshold=CONFIG.WHISPER_NO_SPEECH_THRESHOLD,
-                log_prob_threshold=CONFIG.WHISPER_LOGPROB_THRESHOLD,
-                compression_ratio_threshold=CONFIG.WHISPER_COMPRESSION_RATIO_THRESHOLD,
-            )
+            transcribe_kwargs = {
+                "language": self.language,
+                "task": self.task,
+                "beam_size": beam_size,
+                "vad_filter": False,  # Already filtered
+                "word_timestamps": False,
+                "no_speech_threshold": CONFIG.WHISPER_NO_SPEECH_THRESHOLD,
+                "log_prob_threshold": CONFIG.WHISPER_LOGPROB_THRESHOLD,
+                "compression_ratio_threshold": CONFIG.WHISPER_COMPRESSION_RATIO_THRESHOLD,
+            }
+            if use_context and initial_prompt:
+                transcribe_kwargs["initial_prompt"] = initial_prompt
+
+            segments, info = self._model.transcribe(audio_chunk, **transcribe_kwargs)
 
             processing_time = time.time() - start_transcribe
             total_processing_time += processing_time
@@ -218,80 +268,29 @@ class WhisperASR:
                         end=seg_end,
                         text=segment.text.strip(),
                         language=info.language if info.language else self.language,
-                        avg_logprob=segment.avg_logprob
-                        if hasattr(segment, "avg_logprob")
-                        else -1.0,
-                        no_speech_prob=segment.no_speech_prob
-                        if hasattr(segment, "no_speech_prob")
-                        else 0.0,
-                        audio_time_start=seg_start
-                        if window_start_time is not None
-                        else None,
-                        audio_time_end=seg_end
-                        if window_start_time is not None
-                        else None,
+                        avg_logprob=(
+                            segment.avg_logprob
+                            if hasattr(segment, "avg_logprob")
+                            else -1.0
+                        ),
+                        no_speech_prob=(
+                            segment.no_speech_prob
+                            if hasattr(segment, "no_speech_prob")
+                            else 0.0
+                        ),
+                        audio_time_start=(
+                            seg_start if window_start_time is not None else None
+                        ),
+                        audio_time_end=(
+                            seg_end if window_start_time is not None else None
+                        ),
                     )
                 )
-            start_time = chunk_start / 1000.0  # ms to seconds
-            end_time = chunk_end / 1000.0
-            start_sample = int(start_time * CONFIG.SAMPLE_RATE)
-            end_sample = int(end_time * CONFIG.SAMPLE_RATE)
-
-            audio_chunk = audio[start_sample:end_sample]
-
-            if len(audio_chunk) < CONFIG.SAMPLE_RATE * 0.1:  # skip very short chunks
-                continue
-
-            # Transcribe this chunk without VAD filter (already filtered)
-            start_transcribe = time.time()
-            segments, info = self._model.transcribe(
-                audio_chunk,
-                language=self.language,
-                task=self.task,
-                beam_size=beam_size,
-                vad_filter=False,  # Already filtered
-                word_timestamps=False,
-                no_speech_threshold=CONFIG.WHISPER_NO_SPEECH_THRESHOLD,
-                log_prob_threshold=CONFIG.WHISPER_LOGPROB_THRESHOLD,
-                compression_ratio_threshold=CONFIG.WHISPER_COMPRESSION_RATIO_THRESHOLD,
-            )
-
-            processing_time = time.time() - start_transcribe
-            total_processing_time += processing_time
-
-            for segment in segments:
-                seg_start = segment.start + start_time
-                seg_end = segment.end + start_time
-
-                if window_start_time is not None:
-                    seg_start += window_start_time
-                    seg_end += window_start_time
-
-                all_segments.append(
-                    TranscriptionSegment(
-                        start=seg_start,
-                        end=seg_end,
-                        text=segment.text.strip(),
-                        language=info.language if info.language else self.language,
-                        avg_logprob=segment.avg_logprob
-                        if hasattr(segment, "avg_logprob")
-                        else -1.0,
-                        no_speech_prob=segment.no_speech_prob
-                        if hasattr(segment, "no_speech_prob")
-                        else 0.0,
-                        audio_time_start=seg_start
-                        if window_start_time is not None
-                        else None,
-                        audio_time_end=seg_end
-                        if window_start_time is not None
-                        else None,
-                    )
-                )
-
         # Update stats
         self._total_processing_time += total_processing_time
         self._num_transcriptions += 1
         self._last_transcription_time = total_processing_time if all_segments else 0.0
+        self._last_finish_time = time.time()
 
         audio_duration = len(audio) / CONFIG.SAMPLE_RATE
         rtf = total_processing_time / audio_duration if audio_duration > 0 else 0
@@ -333,9 +332,17 @@ class WhisperASR:
 
     def reset_stats(self) -> None:
         self._last_transcription_time = 0.0
+        self._last_finish_time = 0.0
         self._total_processing_time = 0.0
         self._num_transcriptions = 0
 
     @property
     def is_loaded(self) -> bool:
         return self._is_loaded
+
+    def is_busy(self) -> bool:
+        with self._processing_lock:
+            if self._is_processing:
+                return True
+            time_since_last = time.time() - self._last_finish_time
+            return time_since_last < CONFIG.MIN_PROCESSING_INTERVAL

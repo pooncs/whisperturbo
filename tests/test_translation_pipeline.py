@@ -1,5 +1,6 @@
 import pytest
 import time
+import numpy as np
 from unittest.mock import patch, MagicMock, PropertyMock
 
 
@@ -20,6 +21,7 @@ def mock_dependencies():
         mock_audio_instance = MagicMock()
         mock_audio.return_value = mock_audio_instance
         mock_audio_instance.vad_options = MagicMock()
+        mock_audio_instance.get_current_timestamp.return_value = 10.0
 
         mock_whisper_instance = MagicMock()
         mock_whisper.return_value = mock_whisper_instance
@@ -30,6 +32,7 @@ def mock_dependencies():
             "num_transcriptions": 1,
             "model_loaded": True,
         }
+        mock_whisper_instance.is_busy.return_value = False
 
         mock_diarization_instance = MagicMock()
         mock_diarization.return_value = mock_diarization_instance
@@ -208,7 +211,7 @@ class TestProcessAudio:
 
         translation_pipeline._process_audio()
 
-        mock_dependencies["whisper_instance"].transcribe.assert_not_called()
+        mock_dependencies["whisper_instance"].transcribe_vad_chunks.assert_not_called()
 
     def test_process_audio_insufficient_audio(
         self, translation_pipeline, mock_dependencies
@@ -221,7 +224,7 @@ class TestProcessAudio:
 
         translation_pipeline._process_audio()
 
-        mock_dependencies["whisper_instance"].transcribe.assert_not_called()
+        mock_dependencies["whisper_instance"].transcribe_vad_chunks.assert_not_called()
 
     def test_process_audio_success(self, translation_pipeline, mock_dependencies):
         """Test _process_audio processes audio successfully."""
@@ -229,42 +232,156 @@ class TestProcessAudio:
         mock_dependencies["audio_instance"].get_recent_audio.return_value = MagicMock(
             __len__=lambda self: 16000 * 5
         )
-        mock_dependencies["whisper_instance"].transcribe.return_value = [
+        mock_dependencies["whisper_instance"].transcribe_vad_chunks.return_value = [
             MagicMock(start=0, end=1, text="Hello", language="en", no_speech_prob=0.1)
+        ]
+        mock_dependencies["fusion_instance"].fuse.return_value = [
+            MagicMock(start=0, end=1, text="Hello", speaker="Speaker 1")
         ]
 
         translation_pipeline._process_audio()
 
-        mock_dependencies["whisper_instance"].transcribe.assert_called_once()
+        mock_dependencies["whisper_instance"].transcribe_vad_chunks.assert_called_once()
         mock_dependencies["fusion_instance"].fuse.assert_called_once()
+
+        # Check metrics
+        assert translation_pipeline._metrics["cycles"] == 1
+        assert len(translation_pipeline._metrics["latencies"]) == 1
+        assert len(translation_pipeline._metrics["rtfs"]) == 1
+        assert translation_pipeline._metrics["total_segments"] > 0
+
+    def test_benchmark_mode_metrics(self, mock_dependencies, caplog):
+        """Test benchmark mode metrics reporting."""
+        import logging
+        from main import TranslationPipeline
+
+        pipeline = TranslationPipeline(
+            enable_gui=False, enable_diarization=False, benchmark_mode=True
+        )
+
+        mock_dependencies["audio_instance"].is_running = True
+        mock_dependencies["audio_instance"].get_recent_audio.return_value = np.zeros(
+            16000 * 5, dtype=np.float32
+        )
+
+        # Mock fusion to return a segment with increasing end time to avoid deduplication
+        def mock_fuse(asr_segs, speaker_segs, timestamp):
+            if not asr_segs:
+                return []
+            return [
+                MagicMock(
+                    start=asr_segs[0].start,
+                    end=asr_segs[0].end,
+                    text=asr_segs[0].text,
+                    speaker="Speaker 1",
+                )
+            ]
+
+        mock_dependencies["fusion_instance"].fuse.side_effect = mock_fuse
+
+        with caplog.at_level(logging.INFO):
+            # Process 5 cycles with different segment times to trigger benchmark report
+            for i in range(5):
+                mock_dependencies[
+                    "whisper_instance"
+                ].transcribe_vad_chunks.return_value = [
+                    MagicMock(
+                        start=i * 2,
+                        end=i * 2 + 1,
+                        text=f"Hello {i}",
+                        language="en",
+                        no_speech_prob=0.1,
+                    )
+                ]
+                pipeline._process_audio()
+
+            # Check if benchmark report was logged
+            assert any("BENCHMARK:" in record.message for record in caplog.records)
+            assert pipeline._metrics["cycles"] == 5
+
+    def test_deduplication(self, mock_dependencies):
+        """Test that already emitted segments are not emitted again."""
+        from main import TranslationPipeline
+
+        pipeline = TranslationPipeline(enable_gui=False, enable_diarization=False)
+
+        mock_dependencies["audio_instance"].is_running = True
+        mock_dependencies["audio_instance"].get_recent_audio.return_value = np.zeros(
+            16000 * 5, dtype=np.float32
+        )
+
+        # Mock segments that overlap in time
+        seg1 = MagicMock(start=0, end=2, text="Segment 1", language="en")
+        seg2 = MagicMock(start=1.5, end=3, text="Segment 2", language="en")
+
+        # First call returns both
+        mock_dependencies["whisper_instance"].transcribe_vad_chunks.return_value = [
+            seg1,
+            seg2,
+        ]
+        mock_dependencies["fusion_instance"].fuse.return_value = [seg1, seg2]
+
+        pipeline._process_audio()
+
+        assert pipeline._last_emitted_end_time == 3.0
+        assert mock_dependencies["fusion_instance"].fuse.call_count == 1
+
+        # Second call returns seg2 and a new seg3
+        seg3 = MagicMock(start=3.5, end=5, text="Segment 3", language="en")
+        mock_dependencies["whisper_instance"].transcribe_vad_chunks.return_value = [
+            seg2,
+            seg3,
+        ]
+        mock_dependencies["fusion_instance"].fuse.return_value = [seg3]
+
+        pipeline._process_audio()
+
+        # Should only fuse seg3 because seg2.end (3.0) <= last_emitted_end_time (3.0)
+        # Wait, the logic is: new_asr_segments = [s for s in asr_segments if s.end > self._last_emitted_end_time + epsilon]
+        # seg2.end is 3.0, last_emitted_end_time is 3.0, epsilon is 0.1. So 3.0 > 3.1 is False. Correct.
+
+        assert pipeline._last_emitted_end_time == 5.0
+        assert mock_dependencies["fusion_instance"].fuse.call_count == 2
+
+        # Check that fuse was called with only seg3 in the second call
+        args, kwargs = mock_dependencies["fusion_instance"].fuse.call_args
+        assert len(args[0]) == 1
+        assert args[0][0] == seg3
 
     def test_process_audio_with_diarization(self, mock_dependencies):
         """Test _process_audio includes diarization when enabled."""
-        from main import TranslationPipeline
+        from main import TranslationPipeline, CONFIG
 
         pipeline = TranslationPipeline(enable_gui=False, enable_diarization=True)
         pipeline._running = True
         pipeline._audio_input = MagicMock()
         pipeline._audio_input.is_running = True
-        pipeline._audio_input.get_recent_audio.return_value = MagicMock(
-            __len__=lambda self: 16000 * 5
+        pipeline._audio_input.get_recent_audio.return_value = np.zeros(
+            16000 * 5, dtype=np.float32
         )
         pipeline._audio_input.vad_options = MagicMock()
         pipeline._audio_input.get_current_timestamp.return_value = 20.0
 
         pipeline._whisper = MagicMock()
-        pipeline._whisper.transcribe.return_value = [
+        pipeline._whisper.is_busy.return_value = False
+        pipeline._whisper.transcribe_vad_chunks.return_value = [
             MagicMock(start=0, end=1, text="Hello", language="en", no_speech_prob=0.1)
         ]
+        pipeline._whisper.get_stats.return_value = {"last_processing_time": 0.5}
 
         pipeline._diarization = MagicMock()
-        pipeline._diarization.diarize_audio.return_value = []
+        pipeline._diarization.is_loaded = True
+        pipeline._diarization.is_busy.return_value = False
+        pipeline._diarization.get_latest_results.return_value = []
+        pipeline._last_diarization_time = 0.0
+        pipeline._process_interval = 1.0
 
         pipeline._fusion = MagicMock()
+        pipeline._fusion.fuse.return_value = []
 
         pipeline._process_audio()
 
-        pipeline._diarization.diarize_audio.assert_called_once()
+        pipeline._diarization.process_async.assert_called_once()
 
 
 class TestProcessLoop:
@@ -289,3 +406,52 @@ class TestSetupComponents:
         mock_dependencies["audio"].assert_called()
         mock_dependencies["whisper"].assert_called()
         mock_dependencies["fusion"].assert_called()
+
+
+class TestBackpressure:
+    """Tests for backpressure mechanism."""
+
+    def test_pipeline_skips_when_whisper_busy(self, mock_dependencies):
+        """Test pipeline skips processing when whisper is busy."""
+        from main import TranslationPipeline
+
+        pipeline = TranslationPipeline(enable_gui=False, enable_diarization=False)
+        pipeline._running = True
+        pipeline._audio_input = MagicMock()
+        pipeline._audio_input.is_running = True
+
+        pipeline._whisper = MagicMock()
+        pipeline._whisper.is_busy.return_value = True
+
+        pipeline._fusion = MagicMock()
+
+        pipeline._process_audio()
+
+        pipeline._whisper.transcribe_vad_chunks.assert_not_called()
+
+    def test_pipeline_processes_when_whisper_not_busy(self, mock_dependencies):
+        """Test pipeline processes when whisper is not busy."""
+        from main import TranslationPipeline
+
+        pipeline = TranslationPipeline(enable_gui=False, enable_diarization=False)
+        pipeline._running = True
+        pipeline._audio_input = MagicMock()
+        pipeline._audio_input.is_running = True
+        pipeline._audio_input.get_recent_audio.return_value = np.zeros(
+            16000 * 5, dtype=np.float32
+        )
+        pipeline._audio_input.get_current_timestamp.return_value = 10.0
+
+        pipeline._whisper = MagicMock()
+        pipeline._whisper.is_busy.return_value = False
+        pipeline._whisper.transcribe_vad_chunks.return_value = [
+            MagicMock(start=0, end=1, text="Hello", language="en", no_speech_prob=0.1)
+        ]
+        pipeline._whisper.get_stats.return_value = {"last_processing_time": 0.5}
+
+        pipeline._fusion = MagicMock()
+        pipeline._fusion.fuse.return_value = []
+
+        pipeline._process_audio()
+
+        pipeline._whisper.transcribe_vad_chunks.assert_called_once()

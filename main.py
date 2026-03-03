@@ -40,13 +40,16 @@ class TranslationPipeline:
         enable_gui: bool = True,
         enable_diarization: bool = True,
         gui_port: int = 5006,
+        benchmark_mode: bool = False,
     ):
         self.enable_gui = enable_gui
         self.enable_diarization = enable_diarization
         self.gui_port = gui_port
+        self.benchmark_mode = benchmark_mode
 
         self._running = False
         self._shutdown_event = threading.Event()
+        self._paused = False
 
         self._audio_input: Optional[AudioInput] = None
         self._whisper: Optional[WhisperASR] = None
@@ -62,6 +65,17 @@ class TranslationPipeline:
         self._diarization_interval = 15.0
         self._last_diarization_time = 0.0
         self._cached_speaker_segments: List[SpeakerSegment] = []
+
+        self._last_emitted_end_time = 0.0
+
+        # Metrics tracking
+        self._metrics = {
+            "latencies": [],
+            "rtfs": [],
+            "processing_times": [],
+            "total_segments": 0,
+            "cycles": 0,
+        }
 
         self._setup_components()
 
@@ -82,7 +96,7 @@ class TranslationPipeline:
         logger.info("Fusion initialized")
 
         if self.enable_gui:
-            self._gui = TranslationGUI(self._fusion)
+            self._gui = TranslationGUI(self._fusion, pipeline=self)
             logger.info("TranslationGUI initialized")
 
     def start(self) -> None:
@@ -143,6 +157,10 @@ class TranslationPipeline:
 
         while not self._shutdown_event.is_set():
             try:
+                if self._paused:
+                    time.sleep(0.1)
+                    continue
+
                 current_time = time.time()
 
                 if current_time - last_process_time >= self._process_interval:
@@ -161,6 +179,10 @@ class TranslationPipeline:
         if not self._audio_input.is_running:
             return
 
+        if self._whisper.is_busy():
+            logger.debug("Whisper is busy, skipping this cycle")
+            return
+
         audio_duration = 5.0
         window_start_time = self._audio_input.get_current_timestamp() - audio_duration
 
@@ -172,7 +194,8 @@ class TranslationPipeline:
         if len(audio) < CONFIG.SAMPLE_RATE * 0.5:
             return
 
-        timestamp = time.time()
+        # Start metric tracking
+        timestamp_start = time.time()
 
         asr_segments = self._whisper.transcribe_vad_chunks(
             audio,
@@ -180,6 +203,16 @@ class TranslationPipeline:
         )
 
         if not asr_segments:
+            return
+
+        # Filter out segments that have already been emitted
+        # Use a small epsilon to avoid floating point issues
+        epsilon = 0.1
+        new_asr_segments = [
+            s for s in asr_segments if s.end > self._last_emitted_end_time + epsilon
+        ]
+
+        if not new_asr_segments:
             return
 
         # Handle async diarization
@@ -212,38 +245,69 @@ class TranslationPipeline:
 
         speaker_segments = self._cached_speaker_segments
 
-        fused_segments = self._fusion.fuse(asr_segments, speaker_segments, timestamp)
+        fused_segments = self._fusion.fuse(
+            new_asr_segments, speaker_segments, timestamp_start
+        )
+
+        if fused_segments:
+            self._last_emitted_end_time = max(s.end for s in fused_segments)
 
         stats = self._whisper.get_stats()
-        processing_time = stats.get("last_processing_time", 0)
-        latency_seconds = time.time() - timestamp
-        rtf = processing_time / audio_duration if audio_duration > 0 else 0
+        last_processing_time = stats.get("last_processing_time", 0)
+        latency_seconds = time.time() - timestamp_start
+        rtf = last_processing_time / audio_duration if audio_duration > 0 else 0
         segments_emitted = len(fused_segments)
 
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(
-                f"METRICS: latency={latency_seconds:.2f}s audio_duration={audio_duration:.2f}s "
-                f"rtf={rtf:.2f} segments={segments_emitted}"
-            )
+        # Update aggregate metrics
+        self._metrics["latencies"].append(latency_seconds)
+        self._metrics["rtfs"].append(rtf)
+        self._metrics["processing_times"].append(last_processing_time)
+        self._metrics["total_segments"] += segments_emitted
+        self._metrics["cycles"] += 1
+
+        # Log metrics consistently
+        log_msg = (
+            f"METRICS: latency={latency_seconds:.2f}s "
+            f"processing={last_processing_time:.2f}s "
+            f"audio_duration={audio_duration:.2f}s "
+            f"rtf={rtf:.2f} segments={segments_emitted}"
+        )
+
+        if logger.isEnabledFor(logging.DEBUG) or self.benchmark_mode:
+            logger.info(log_msg)
         else:
+            logger.debug(log_msg)
+
+        if self.benchmark_mode and self._metrics["cycles"] % 5 == 0:
+            avg_latency = sum(self._metrics["latencies"]) / len(
+                self._metrics["latencies"]
+            )
+            avg_rtf = sum(self._metrics["rtfs"]) / len(self._metrics["rtfs"])
             logger.info(
-                f"METRICS: latency={latency_seconds:.2f}s processing={processing_time:.2f}s "
-                f"audio_duration={audio_duration:.2f}s rtf={rtf:.2f} segments={segments_emitted}"
+                f"BENCHMARK: Avg Latency: {avg_latency:.2f}s, Avg RTF: {avg_rtf:.2f}x, "
+                f"Total Segments: {self._metrics['total_segments']}"
             )
 
         if self._gui and fused_segments:
-            self._gui.add_segments(fused_segments)
-
             processing_rate = (
                 len(fused_segments) / self._process_interval
                 if self._process_interval > 0
                 else 0
             )
             self._gui.update_kpis(latency_seconds, rtf, processing_rate)
+            self._gui.add_segments(fused_segments)
 
         logger.info(
             f"Processed {len(asr_segments)} ASR segments, {len(speaker_segments)} speaker segments, {len(fused_segments)} fused segments"
         )
+
+    def pause(self) -> None:
+        self._paused = True
+        logger.info("Pipeline paused")
+
+    def resume(self) -> None:
+        self._paused = False
+        logger.info("Pipeline resumed")
 
     @property
     def is_running(self) -> bool:
@@ -271,6 +335,11 @@ def parse_args():
         help="GUI server port (default: 5006)",
     )
     parser.add_argument(
+        "--benchmark",
+        action="store_true",
+        help="Run in benchmark mode (more verbose metrics)",
+    )
+    parser.add_argument(
         "--log-level",
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
@@ -294,6 +363,7 @@ def main():
         enable_gui=not args.no_gui,
         enable_diarization=not args.no_diarization,
         gui_port=args.gui_port,
+        benchmark_mode=args.benchmark,
     )
 
     def signal_handler(sig, frame):
