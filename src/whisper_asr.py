@@ -7,6 +7,7 @@ import logging
 
 from faster_whisper import WhisperModel
 from faster_whisper.transcribe import Segment
+from silero_vad import get_speech_timestamps
 
 from .config import CONFIG
 
@@ -22,6 +23,8 @@ class TranscriptionSegment:
     language: str
     avg_logprob: float = -1.0
     no_speech_prob: float = 0.0
+    audio_time_start: Optional[float] = None
+    audio_time_end: Optional[float] = None
 
 
 class WhisperASR:
@@ -79,30 +82,47 @@ class WhisperASR:
         self,
         audio: np.ndarray,
         vad_options: Optional[Any] = None,
-        beam_size: int = 5,
+        beam_size: int = CONFIG.WHISPER_BEAM_SIZE,
         vad_filter: bool = True,
+        window_start_time: Optional[float] = None,
+        condition_on_previous_text: bool = False,
+        initial_prompt: Optional[str] = None,
     ) -> List[TranscriptionSegment]:
         if not self._is_loaded:
             self.load_model()
 
         start_time = time.time()
 
-        segments, info = self._model.transcribe(
-            audio,
-            language=self.language,
-            task=self.task,
-            beam_size=beam_size,
-            vad_options=vad_options,
-            vad_filter=vad_filter,
-            word_timestamps=False,
-        )
+        transcribe_kwargs: dict = {
+            "language": self.language,
+            "task": self.task,
+            "beam_size": beam_size,
+            "vad_options": vad_options,
+            "vad_filter": vad_filter,
+            "word_timestamps": False,
+            "no_speech_threshold": CONFIG.WHISPER_NO_SPEECH_THRESHOLD,
+            "log_prob_threshold": CONFIG.WHISPER_LOGPROB_THRESHOLD,
+            "compression_ratio_threshold": CONFIG.WHISPER_COMPRESSION_RATIO_THRESHOLD,
+        }
+
+        if condition_on_previous_text and initial_prompt:
+            transcribe_kwargs["initial_prompt"] = initial_prompt
+
+        segments, info = self._model.transcribe(audio, **transcribe_kwargs)
 
         results = []
         for segment in segments:
+            seg_start = segment.start
+            seg_end = segment.end
+
+            if window_start_time is not None:
+                seg_start = segment.start + window_start_time
+                seg_end = segment.end + window_start_time
+
             results.append(
                 TranscriptionSegment(
-                    start=segment.start,
-                    end=segment.end,
+                    start=seg_start,
+                    end=seg_end,
                     text=segment.text.strip(),
                     language=info.language if info.language else self.language,
                     avg_logprob=segment.avg_logprob
@@ -111,6 +131,10 @@ class WhisperASR:
                     no_speech_prob=segment.no_speech_prob
                     if hasattr(segment, "no_speech_prob")
                     else 0.0,
+                    audio_time_start=seg_start
+                    if window_start_time is not None
+                    else None,
+                    audio_time_end=seg_end if window_start_time is not None else None,
                 )
             )
 
@@ -128,6 +152,156 @@ class WhisperASR:
         )
 
         return results
+
+    def transcribe_vad_chunks(
+        self,
+        audio: np.ndarray,
+        beam_size: int = CONFIG.WHISPER_BEAM_SIZE,
+        window_start_time: Optional[float] = None,
+    ) -> List[TranscriptionSegment]:
+        if not self._is_loaded:
+            self.load_model()
+
+        # Get speech timestamps using VAD
+        speech_timestamps = get_speech_timestamps(
+            audio,
+            sampling_rate=CONFIG.SAMPLE_RATE,
+            threshold=CONFIG.VAD_THRESHOLD,
+            min_speech_duration_ms=int(CONFIG.VAD_MIN_SPEECH_DURATION * 1000),
+            min_silence_duration_ms=int(CONFIG.VAD_MIN_SILENCE_DURATION * 1000),
+        )
+
+        all_segments = []
+        total_processing_time = 0.0
+
+        for item in speech_timestamps:
+            start_ms = item["start"]
+            end_ms = item["end"]
+            start_time = start_ms / 1000.0
+            end_time = end_ms / 1000.0
+            start_sample = int(start_time * CONFIG.SAMPLE_RATE)
+            end_sample = int(end_time * CONFIG.SAMPLE_RATE)
+
+            audio_chunk = audio[start_sample:end_sample]
+
+            if len(audio_chunk) < CONFIG.SAMPLE_RATE * 0.1:  # skip very short chunks
+                continue
+
+            # Transcribe this chunk without VAD filter (already filtered)
+            start_transcribe = time.time()
+            segments, info = self._model.transcribe(
+                audio_chunk,
+                language=self.language,
+                task=self.task,
+                beam_size=beam_size,
+                vad_filter=False,  # Already filtered
+                word_timestamps=False,
+                no_speech_threshold=CONFIG.WHISPER_NO_SPEECH_THRESHOLD,
+                log_prob_threshold=CONFIG.WHISPER_LOGPROB_THRESHOLD,
+                compression_ratio_threshold=CONFIG.WHISPER_COMPRESSION_RATIO_THRESHOLD,
+            )
+
+            processing_time = time.time() - start_transcribe
+            total_processing_time += processing_time
+
+            for segment in segments:
+                seg_start = segment.start + start_time
+                seg_end = segment.end + start_time
+
+                if window_start_time is not None:
+                    seg_start += window_start_time
+                    seg_end += window_start_time
+
+                all_segments.append(
+                    TranscriptionSegment(
+                        start=seg_start,
+                        end=seg_end,
+                        text=segment.text.strip(),
+                        language=info.language if info.language else self.language,
+                        avg_logprob=segment.avg_logprob
+                        if hasattr(segment, "avg_logprob")
+                        else -1.0,
+                        no_speech_prob=segment.no_speech_prob
+                        if hasattr(segment, "no_speech_prob")
+                        else 0.0,
+                        audio_time_start=seg_start
+                        if window_start_time is not None
+                        else None,
+                        audio_time_end=seg_end
+                        if window_start_time is not None
+                        else None,
+                    )
+                )
+            start_time = chunk_start / 1000.0  # ms to seconds
+            end_time = chunk_end / 1000.0
+            start_sample = int(start_time * CONFIG.SAMPLE_RATE)
+            end_sample = int(end_time * CONFIG.SAMPLE_RATE)
+
+            audio_chunk = audio[start_sample:end_sample]
+
+            if len(audio_chunk) < CONFIG.SAMPLE_RATE * 0.1:  # skip very short chunks
+                continue
+
+            # Transcribe this chunk without VAD filter (already filtered)
+            start_transcribe = time.time()
+            segments, info = self._model.transcribe(
+                audio_chunk,
+                language=self.language,
+                task=self.task,
+                beam_size=beam_size,
+                vad_filter=False,  # Already filtered
+                word_timestamps=False,
+                no_speech_threshold=CONFIG.WHISPER_NO_SPEECH_THRESHOLD,
+                log_prob_threshold=CONFIG.WHISPER_LOGPROB_THRESHOLD,
+                compression_ratio_threshold=CONFIG.WHISPER_COMPRESSION_RATIO_THRESHOLD,
+            )
+
+            processing_time = time.time() - start_transcribe
+            total_processing_time += processing_time
+
+            for segment in segments:
+                seg_start = segment.start + start_time
+                seg_end = segment.end + start_time
+
+                if window_start_time is not None:
+                    seg_start += window_start_time
+                    seg_end += window_start_time
+
+                all_segments.append(
+                    TranscriptionSegment(
+                        start=seg_start,
+                        end=seg_end,
+                        text=segment.text.strip(),
+                        language=info.language if info.language else self.language,
+                        avg_logprob=segment.avg_logprob
+                        if hasattr(segment, "avg_logprob")
+                        else -1.0,
+                        no_speech_prob=segment.no_speech_prob
+                        if hasattr(segment, "no_speech_prob")
+                        else 0.0,
+                        audio_time_start=seg_start
+                        if window_start_time is not None
+                        else None,
+                        audio_time_end=seg_end
+                        if window_start_time is not None
+                        else None,
+                    )
+                )
+
+        # Update stats
+        self._total_processing_time += total_processing_time
+        self._num_transcriptions += 1
+        self._last_transcription_time = total_processing_time if all_segments else 0.0
+
+        audio_duration = len(audio) / CONFIG.SAMPLE_RATE
+        rtf = total_processing_time / audio_duration if audio_duration > 0 else 0
+
+        logger.debug(
+            f"Transcribed VAD chunks {audio_duration:.2f}s audio in {total_processing_time:.2f}s "
+            f"(RTF: {rtf:.2f}x, {len(all_segments)} segments)"
+        )
+
+        return all_segments
 
     def transcribe_streaming(
         self,

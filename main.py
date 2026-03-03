@@ -21,9 +21,10 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.config import CONFIG
 from src.audio_input import AudioInput
 from src.whisper_asr import WhisperASR
-from src.diarization import DiarizationHandler
+from src.diarization import DiarizationHandler, SpeakerSegment
 from src.fusion import Fusion
 from src.gui import TranslationGUI
+from typing import List
 
 
 logging.basicConfig(
@@ -54,6 +55,13 @@ class TranslationPipeline:
         self._gui: Optional[TranslationGUI] = None
 
         self._process_thread: Optional[threading.Thread] = None
+
+        self._audio_time_offset = 0.0
+        self._process_interval = 3.0
+
+        self._diarization_interval = 15.0
+        self._last_diarization_time = 0.0
+        self._cached_speaker_segments: List[SpeakerSegment] = []
 
         self._setup_components()
 
@@ -130,14 +138,14 @@ class TranslationPipeline:
     def _process_loop(self) -> None:
         logger.info("Starting processing loop...")
 
-        process_interval = 3.0
+        self._process_interval = 3.0
         last_process_time = time.time()
 
         while not self._shutdown_event.is_set():
             try:
                 current_time = time.time()
 
-                if current_time - last_process_time >= process_interval:
+                if current_time - last_process_time >= self._process_interval:
                     self._process_audio()
                     last_process_time = current_time
 
@@ -154,6 +162,11 @@ class TranslationPipeline:
             return
 
         audio_duration = 5.0
+        window_start_time = self._audio_input.get_current_timestamp() - audio_duration
+
+        if window_start_time < 0:
+            window_start_time = 0.0
+
         audio = self._audio_input.get_recent_audio(audio_duration)
 
         if len(audio) < CONFIG.SAMPLE_RATE * 0.5:
@@ -161,18 +174,24 @@ class TranslationPipeline:
 
         timestamp = time.time()
 
-        asr_segments = self._whisper.transcribe(
+        asr_segments = self._whisper.transcribe_vad_chunks(
             audio,
-            vad_options=self._audio_input.vad_options,
+            window_start_time=window_start_time,
         )
 
         if not asr_segments:
             return
 
-        speaker_segments = []
-
-        if self._diarization and self._diarization.is_loaded:
-            try:
+        # Handle async diarization
+        current_time = time.time()
+        if (
+            self._diarization
+            and self._diarization.is_loaded
+            and current_time - self._last_diarization_time >= self._diarization_interval
+        ):
+            if self._diarization.is_busy():
+                logger.warning("Diarization is busy, skipping this cycle")
+            else:
                 audio_for_diarization = self._audio_input.get_recent_audio(
                     CONFIG.DIARIZATION_WINDOW_SIZE
                 )
@@ -180,30 +199,47 @@ class TranslationPipeline:
                     self._audio_input.get_current_timestamp()
                     - CONFIG.DIARIZATION_WINDOW_SIZE
                 )
-                speaker_segments = self._diarization.diarize_audio(
-                    audio_for_diarization,
-                    diarization_timestamp,
+                self._diarization.process_async(
+                    audio_for_diarization, diarization_timestamp
                 )
-            except Exception as e:
-                logger.error(f"Diarization error: {e}")
+                self._last_diarization_time = current_time
+
+        # Get latest diarization results from cache
+        if self._diarization:
+            latest_results = self._diarization.get_latest_results()
+            if latest_results is not None:
+                self._cached_speaker_segments = latest_results
+
+        speaker_segments = self._cached_speaker_segments
 
         fused_segments = self._fusion.fuse(asr_segments, speaker_segments, timestamp)
+
+        stats = self._whisper.get_stats()
+        processing_time = stats.get("last_processing_time", 0)
+        latency_seconds = time.time() - timestamp
+        rtf = processing_time / audio_duration if audio_duration > 0 else 0
+        segments_emitted = len(fused_segments)
+
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                f"METRICS: latency={latency_seconds:.2f}s audio_duration={audio_duration:.2f}s "
+                f"rtf={rtf:.2f} segments={segments_emitted}"
+            )
+        else:
+            logger.info(
+                f"METRICS: latency={latency_seconds:.2f}s processing={processing_time:.2f}s "
+                f"audio_duration={audio_duration:.2f}s rtf={rtf:.2f} segments={segments_emitted}"
+            )
 
         if self._gui and fused_segments:
             self._gui.add_segments(fused_segments)
 
-            stats = self._whisper.get_stats()
-            latency = time.time() - timestamp
-            rtf = (
-                stats.get("last_processing_time", 0) / audio_duration
-                if audio_duration > 0
+            processing_rate = (
+                len(fused_segments) / self._process_interval
+                if self._process_interval > 0
                 else 0
             )
-
-            processing_rate = (
-                len(fused_segments) / process_interval if process_interval > 0 else 0
-            )
-            self._gui.update_kpis(latency, rtf, processing_rate)
+            self._gui.update_kpis(latency_seconds, rtf, processing_rate)
 
         logger.info(
             f"Processed {len(asr_segments)} ASR segments, {len(speaker_segments)} speaker segments, {len(fused_segments)} fused segments"

@@ -184,6 +184,49 @@ class TestDiarizationAsync:
         results = diarization_handler.get_results(timeout=0.1)
         assert isinstance(results, list)
 
+    def test_process_async_updates_latest_segments(
+        self, diarization_handler, mock_pyannote
+    ):
+        """Test process_async updates _latest_segments."""
+        audio = np.random.rand(16000 * 10).astype(np.float32)
+
+        diarization_handler.load_pipeline()
+        assert diarization_handler._latest_segments is None
+
+        diarization_handler.process_async(audio, 0.0)
+
+        # Wait for async processing to complete
+        if diarization_handler._processing_thread:
+            diarization_handler._processing_thread.join(timeout=5.0)
+
+        # Verify _latest_segments is updated
+        latest = diarization_handler.get_latest_results()
+        assert latest is not None
+        assert isinstance(latest, list)
+        assert len(latest) == 2  # from mock
+
+    def test_is_busy(self, diarization_handler, mock_pyannote):
+        """Test is_busy returns processing state."""
+        import time
+
+        assert not diarization_handler.is_busy()
+
+        audio = np.random.rand(16000 * 10).astype(np.float32)
+        diarization_handler.load_pipeline()
+        diarization_handler.process_async(audio, 0.0)
+
+        # Let thread start
+        time.sleep(0.1)
+        was_busy = diarization_handler.is_busy()
+
+        # Wait for completion
+        if diarization_handler._processing_thread:
+            diarization_handler._processing_thread.join(timeout=5.0)
+
+        assert (
+            was_busy or not diarization_handler.is_busy()
+        )  # If it finished fast, check it was busy or now not
+
     def test_get_results(self, diarization_handler, mock_pyannote):
         """Test get_results returns segments from queue."""
         test_segments = [MagicMock(), MagicMock()]

@@ -54,6 +54,8 @@ class DiarizationHandler:
         self._last_processed_end = 0.0
         self._current_speakers: Dict[str, float] = {}
 
+        self._latest_segments: Optional[List[SpeakerSegment]] = None
+
     def load_pipeline(self) -> None:
         if self._is_loaded:
             return
@@ -139,9 +141,11 @@ class DiarizationHandler:
             try:
                 segments = self._process_window(audio, timestamp)
                 self._result_queue.put(segments)
+                self._latest_segments = segments
             except Exception as e:
                 logger.error(f"Async diarization error: {e}")
                 self._result_queue.put([])
+                self._latest_segments = []
             finally:
                 self._is_processing = False
 
@@ -153,6 +157,12 @@ class DiarizationHandler:
             return self._result_queue.get(timeout=timeout)
         except queue.Empty:
             return []
+
+    def get_latest_results(self) -> Optional[List[SpeakerSegment]]:
+        return self._latest_segments
+
+    def is_busy(self) -> bool:
+        return self._is_processing
 
     def get_speaker_at_time(self, time: float) -> Optional[str]:
         results = self.get_results(timeout=0)
