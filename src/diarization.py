@@ -65,10 +65,30 @@ class DiarizationHandler:
             logger.info(f"Loading diarization pipeline: {self.model_name}")
             start_time = time.time()
 
-            self._pipeline = Pipeline.from_pretrained(
-                self.model_name,
-                use_auth_token=self.hf_token,
-            )
+            # Try loading with token first
+            try:
+                self._pipeline = Pipeline.from_pretrained(
+                    self.model_name,
+                    token=self.hf_token if self.hf_token else True
+                )
+            except Exception as e:
+                error_msg = str(e)
+                # If SSL/certificate error, skip diarization gracefully
+                if 'SSL' in error_msg or 'certificate' in error_msg.lower() or 'CERTIFICATE' in error_msg:
+                    logger.warning(f"Cannot load diarization due to SSL issues: {e}")
+                    logger.warning("SSL certificate verification failed. Diarization will be disabled.")
+                    logger.warning("To fix: either fix SSL certificates on your system or set HF_TOKEN in a proper environment")
+                    self._is_loaded = True
+                    return
+                # Try without token
+                try:
+                    logger.warning(f"Loading with token failed: {e}, trying without token...")
+                    self._pipeline = Pipeline.from_pretrained(self.model_name)
+                except Exception as e2:
+                    logger.warning(f"Cannot load diarization: {e2}")
+                    logger.warning("Diarization will be disabled")
+                    self._is_loaded = True
+                    return
 
             if CONFIG.WHISPER_DEVICE == "cuda":
                 try:
@@ -91,11 +111,18 @@ class DiarizationHandler:
         if not self._is_loaded:
             self.load_pipeline()
 
+        if not self._pipeline:
+            return []
+
         try:
-            diarization = self._pipeline({"waveform": audio, "sample_rate": CONFIG.SAMPLE_RATE})
+            # Convert audio to torch tensor with shape (1, samples)
+            waveform = torch.from_numpy(audio).float().unsqueeze(0)
+            
+            diarization = self._pipeline({"waveform": waveform, "sample_rate": CONFIG.SAMPLE_RATE})
 
             results = []
-            for turn, _, speaker in diarization.itertracks(yield_label=True):
+            annotation = diarization.speaker_diarization if hasattr(diarization, 'speaker_diarization') else diarization
+            for turn, _, speaker in annotation.itertracks(yield_label=True):
                 results.append(
                     SpeakerSegment(
                         start=turn.start + start_time,
@@ -105,6 +132,7 @@ class DiarizationHandler:
                     )
                 )
 
+            logger.info(f"Diarization found {len(results)} speaker segments")
             return results
 
         except Exception as e:

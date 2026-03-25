@@ -1,4 +1,23 @@
 #!/usr/bin/env python3
+import ssl
+ssl._create_default_https_context = ssl._create_unverified_context
+
+# Patch httpcore to use unverified SSL for TLS connections
+import httpcore._backends.sync as sync_backend
+
+# Check if TLSinTLSStream exists and patch it
+if hasattr(sync_backend, 'TLSinTLSStream'):
+    _original_tls_start = sync_backend.TLSinTLSStream.start_tls
+
+    def _patched_tls_start(self, ssl_context, timeout=None):
+        if ssl_context is None:
+            ssl_context = ssl.create_default_context()
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_NONE
+        return _original_tls_start(self, ssl_context, timeout)
+
+    sync_backend.TLSinTLSStream.start_tls = _patched_tls_start
+
 """
 Real-Time Speech Translation System
 Korean -> English translation using Faster-Whisper with speaker diarization
@@ -21,7 +40,7 @@ from src.audio_input import AudioInput
 from src.config import CONFIG
 from src.diarization import DiarizationHandler, SpeakerSegment
 from src.fusion import Fusion
-from src.gui import TranslationGUI
+from gradio_gui import GradioGUI
 from src.whisper_asr import WhisperASR
 
 logging.basicConfig(
@@ -38,11 +57,13 @@ class TranslationPipeline:
         enable_diarization: bool = True,
         gui_port: int = 5006,
         benchmark_mode: bool = False,
+        audio_device: Optional[int] = None,
     ):
         self.enable_gui = enable_gui
         self.enable_diarization = enable_diarization
         self.gui_port = gui_port
         self.benchmark_mode = benchmark_mode
+        self.audio_device = audio_device
 
         self._running = False
         self._shutdown_event = threading.Event()
@@ -52,7 +73,7 @@ class TranslationPipeline:
         self._whisper: Optional[WhisperASR] = None
         self._diarization: Optional[DiarizationHandler] = None
         self._fusion: Optional[Fusion] = None
-        self._gui: Optional[TranslationGUI] = None
+        self._gui: Optional[GradioGUI] = None
 
         self._process_thread: Optional[threading.Thread] = None
 
@@ -79,7 +100,7 @@ class TranslationPipeline:
     def _setup_components(self) -> None:
         logger.info("Setting up translation pipeline...")
 
-        self._audio_input = AudioInput()
+        self._audio_input = AudioInput(device=self.audio_device)
         logger.info("AudioInput initialized")
 
         self._whisper = WhisperASR()
@@ -93,8 +114,8 @@ class TranslationPipeline:
         logger.info("Fusion initialized")
 
         if self.enable_gui:
-            self._gui = TranslationGUI(self._fusion, pipeline=self)
-            logger.info("TranslationGUI initialized")
+            self._gui = GradioGUI(self._fusion, pipeline=self)
+            logger.info("GradioGUI initialized")
 
     def start(self) -> None:
         if self._running:
@@ -110,8 +131,9 @@ class TranslationPipeline:
 
         self._audio_input.start()
 
-        if self._gui:
-            self._gui.serve(port=self.gui_port)
+        # GUI is already served by launcher, no need to serve again
+        # if self._gui:
+        #     self._gui.serve(port=self.gui_port)
 
         self._running = True
         self._shutdown_event.clear()
@@ -149,7 +171,7 @@ class TranslationPipeline:
     def _process_loop(self) -> None:
         logger.info("Starting processing loop...")
 
-        self._process_interval = 3.0
+        self._process_interval = 2.0
         last_process_time = time.time()
 
         while not self._shutdown_event.is_set():
@@ -174,13 +196,14 @@ class TranslationPipeline:
 
     def _process_audio(self) -> None:
         if not self._audio_input.is_running:
+            logger.debug("Audio input not running")
             return
 
         if self._whisper.is_busy():
             logger.debug("Whisper is busy, skipping this cycle")
             return
 
-        audio_duration = 5.0
+        audio_duration = 3.0
         window_start_time = self._audio_input.get_current_timestamp() - audio_duration
 
         if window_start_time < 0:
@@ -189,17 +212,30 @@ class TranslationPipeline:
         audio = self._audio_input.get_recent_audio(audio_duration)
 
         if len(audio) < CONFIG.SAMPLE_RATE * 0.5:
+            logger.debug(f"Audio too short: {len(audio)} samples")
+            return
+
+        max_amp = max(abs(x) for x in audio) if len(audio) > 0 else 0
+        logger.info(f"Audio buffer: {len(audio)} samples, max_amp={max_amp:.4f}")
+
+        # Skip if audio is too quiet (below threshold)
+        if max_amp < 0.005:  # Lower threshold for loopback audio
+            logger.debug(f"Audio too quiet (max_amp={max_amp:.4f}), skipping")
             return
 
         # Start metric tracking
         timestamp_start = time.time()
 
-        asr_segments = self._whisper.transcribe_vad_chunks(
+        logger.info("Starting transcription and translation...")
+        asr_segments, translated_segments = self._whisper.transcribe_and_translate(
             audio,
             window_start_time=window_start_time,
         )
 
+        logger.info(f"Transcription returned {len(asr_segments)} source, {len(translated_segments)} target segments")
+
         if not asr_segments:
+            logger.debug("No ASR segments found, returning")
             return
 
         # Filter out segments that have already been emitted
@@ -208,8 +244,14 @@ class TranslationPipeline:
         new_asr_segments = [
             s for s in asr_segments if s.end > self._last_emitted_end_time + epsilon
         ]
+        new_translated_segments = [
+            s for s in translated_segments if s.end > self._last_emitted_end_time + epsilon
+        ]
+
+        logger.info(f"New segments to emit: {len(new_asr_segments)} source, {len(new_translated_segments)} target")
 
         if not new_asr_segments:
+            logger.debug("No new segments to emit (all already emitted)")
             return
 
         # Handle async diarization
@@ -239,7 +281,18 @@ class TranslationPipeline:
 
         speaker_segments = self._cached_speaker_segments
 
-        fused_segments = self._fusion.fuse(new_asr_segments, speaker_segments, timestamp_start)
+        source_lang = self._whisper.language if self._whisper.language != "auto" else "auto"
+        target_lang = self._whisper.target_language or "en"
+
+        logger.info(f"Fusing {len(new_asr_segments)} ASR segments with {len(speaker_segments)} speaker segments")
+        fused_segments = self._fusion.fuse(
+            new_asr_segments,
+            new_translated_segments,
+            speaker_segments,
+            timestamp_start,
+            source_language=source_lang,
+            target_language=target_lang,
+        )
 
         if fused_segments:
             self._last_emitted_end_time = max(s.end for s in fused_segments)
@@ -257,18 +310,14 @@ class TranslationPipeline:
         self._metrics["total_segments"] += segments_emitted
         self._metrics["cycles"] += 1
 
-        # Log metrics consistently
+        # Log metrics
         log_msg = (
             f"METRICS: latency={latency_seconds:.2f}s "
             f"processing={last_processing_time:.2f}s "
             f"audio_duration={audio_duration:.2f}s "
             f"rtf={rtf:.2f} segments={segments_emitted}"
         )
-
-        if logger.isEnabledFor(logging.DEBUG) or self.benchmark_mode:
-            logger.info(log_msg)
-        else:
-            logger.debug(log_msg)
+        logger.info(log_msg)
 
         if self.benchmark_mode and self._metrics["cycles"] % 5 == 0:
             avg_latency = sum(self._metrics["latencies"]) / len(self._metrics["latencies"])
@@ -297,9 +346,28 @@ class TranslationPipeline:
         self._paused = False
         logger.info("Pipeline resumed")
 
+    def set_audio_device(self, device: int) -> None:
+        """Set the audio input device"""
+        if self._running:
+            logger.warning("Cannot change device while running")
+            return
+        self.audio_device = device
+        if self._audio_input:
+            self._audio_input._device = device
+
+    def set_languages(self, source_language: str, target_language: str) -> None:
+        """Set source and target languages for transcription and translation."""
+        if self._whisper:
+            self._whisper.set_languages(source_language, target_language)
+        logger.info(f"Languages set: source={source_language}, target={target_language}")
+
     @property
     def is_running(self) -> bool:
         return self._running
+
+    def serve(self, **kwargs) -> None:
+        if self._gui:
+            self._gui.serve(port=self.gui_port, **kwargs)
 
 
 def parse_args():
@@ -361,17 +429,17 @@ def main():
     signal.signal(signal.SIGTERM, signal_handler)
 
     try:
-        pipeline.start()
+        # Don't auto-start - GUI will control when to start
+        logger.info("GUI is ready. Click 'Start Translation' to begin.")
 
-        logger.info("Pipeline running. Press Ctrl+C to stop.")
-
-        while pipeline.is_running:
+        while True:
             time.sleep(1)
 
     except KeyboardInterrupt:
         logger.info("Keyboard interrupt received")
     finally:
-        pipeline.stop()
+        if pipeline.is_running:
+            pipeline.stop()
 
 
 if __name__ == "__main__":

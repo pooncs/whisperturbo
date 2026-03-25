@@ -86,7 +86,7 @@ if defined MISSING_DEPS (
 )
 echo     All dependencies installed.
 
-:: Set HF_TOKEN from environment if provided via --token
+:: Set HF_TOKEN for this session
 if defined HF_TOKEN (
     set "HF_TOKEN=%HF_TOKEN%"
 )

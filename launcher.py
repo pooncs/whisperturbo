@@ -17,6 +17,11 @@ PROJECT_ROOT = Path(__file__).parent
 sys.path.insert(0, str(PROJECT_ROOT))
 VERSION = "1.0.0"
 
+# Set default HF_TOKEN if not in environment (for development/testing)
+DEFAULT_HF_TOKEN = ""
+if not os.environ.get("HF_TOKEN"):
+    os.environ["HF_TOKEN"] = DEFAULT_HF_TOKEN
+
 
 class Colors:
     RESET = chr(27) + "[0m"
@@ -75,7 +80,9 @@ def check_cuda():
                 prop = torch.cuda.get_device_properties(i)
                 device_props.append(f"{prop.name} ({prop.total_memory // (1024**3)}GB)")
             device_info = ", ".join(device_props)
-            print_status(f"CUDA available: {device_count} device(s) - {device_info}", True, 2)
+            print_status(
+                f"CUDA available: {device_count} device(s) - {device_info}", True, 2
+            )
             return True
         else:
             print_warning("CUDA not available - using CPU")
@@ -104,7 +111,9 @@ def check_audio_devices():
         if input_devices:
             default_input = sd.default.device[0]
             default_name = (
-                devices[default_input]["name"] if default_input < len(devices) else "Unknown"
+                devices[default_input]["name"]
+                if default_input < len(devices)
+                else "Unknown"
             )
             print_status(
                 f"Audio input: {len(input_devices)} device(s) - default: {default_name}",
@@ -117,7 +126,9 @@ def check_audio_devices():
         if output_devices:
             default_output = sd.default.device[1]
             default_name = (
-                devices[default_output]["name"] if default_output < len(devices) else "Unknown"
+                devices[default_output]["name"]
+                if default_output < len(devices)
+                else "Unknown"
             )
             print_status(
                 f"Audio output: {len(output_devices)} device(s) - default: {default_name}",
@@ -197,7 +208,7 @@ class WhisperTurboLauncher:
         self,
         enable_gui=True,
         enable_diarization=True,
-        gui_port=5006,
+        gui_port=7860,
         open_browser=True,
         check_models_first=True,
     ):
@@ -268,9 +279,10 @@ class WhisperTurboLauncher:
                 print_status("Loading diarization...")
                 self.pipeline._diarization.load_pipeline()
                 print_status("Diarization loaded", True, 2)
-            print_status("Starting audio...")
-            self.pipeline._audio_input.start()
-            print_status("Audio started", True, 2)
+            # Don't auto-start audio - user will click Start Translation in GUI
+            # print_status("Starting audio...")
+            # self.pipeline._audio_input.start()
+            # print_status("Audio started", True, 2)
             if self.enable_gui:
                 print_status("Starting GUI on port " + str(self.gui_port) + "...")
                 self.pipeline._gui.serve(port=self.gui_port)
@@ -336,11 +348,13 @@ def parse_args():
     p = argparse.ArgumentParser(description="WhisperTurbo Launcher")
     p.add_argument("--no-gui", action="store_true")
     p.add_argument("--no-diarization", action="store_true")
-    p.add_argument("--port", type=int, default=5006)
+    p.add_argument("--port", type=int, default=7860)
     p.add_argument("--open-browser", action="store_true", default=True)
     p.add_argument("--no-browser", action="store_true")
     p.add_argument("--skip-models-check", action="store_true")
-    p.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
+    p.add_argument(
+        "--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"]
+    )
     return p.parse_args()
 
 

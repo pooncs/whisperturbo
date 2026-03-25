@@ -1,5 +1,5 @@
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 from .diarization import SpeakerSegment
@@ -13,9 +13,11 @@ logger = logging.getLogger(__name__)
 class TranslatedSegment:
     start: float
     end: float
-    text: str
-    speaker: Optional[str]
-    language: str
+    source_text: str = ""  # Original transcription (e.g., Korean)
+    target_text: str = ""  # Translated text (e.g., English)
+    source_language: str = ""
+    target_language: str = "en"
+    speaker: Optional[str] = None
     confidence: float = 1.0
     timestamp: float = 0.0
 
@@ -77,10 +79,19 @@ class Fusion:
     def fuse(
         self,
         asr_segments: list[TranscriptionSegment],
+        translated_segments: list[TranscriptionSegment],
         speaker_segments: list[SpeakerSegment],
         timestamp: float,
+        source_language: str = "ko",
+        target_language: str = "en",
     ) -> list[TranslatedSegment]:
         fused = []
+
+        # Build translation lookup by time
+        translation_lookup = {}
+        for trans_seg in translated_segments:
+            key = (round(trans_seg.start, 1), round(trans_seg.end, 1))
+            translation_lookup[key] = trans_seg.text.strip()
 
         for asr_seg in asr_segments:
             if not asr_seg.text:
@@ -88,6 +99,18 @@ class Fusion:
 
             if asr_seg.end <= self._last_emitted_end_time - self.epsilon:
                 continue
+
+            # Find matching translation
+            key = (round(asr_seg.start, 1), round(asr_seg.end, 1))
+            target_text = translation_lookup.get(key, "")
+
+            # If no exact match, find closest translation
+            if not target_text:
+                for trans_seg in translated_segments:
+                    if (abs(trans_seg.start - asr_seg.start) < 1.0 and
+                        abs(trans_seg.end - asr_seg.end) < 1.0):
+                        target_text = trans_seg.text.strip()
+                        break
 
             speaker = self._get_dominant_speaker(asr_seg, speaker_segments)
 
@@ -98,17 +121,21 @@ class Fusion:
                 TranslatedSegment(
                     start=asr_seg.start,
                     end=asr_seg.end,
-                    text=asr_seg.text,
+                    source_text=asr_seg.text.strip(),
+                    target_text=target_text,
+                    source_language=asr_seg.language or source_language,
+                    target_language=target_language,
                     speaker=speaker,
-                    language=asr_seg.language,
                     confidence=1.0 - asr_seg.no_speech_prob,
                     timestamp=timestamp,
                 )
             )
 
         for seg in fused:
-            seg.text = normalize_whitespace(seg.text)
-            seg.text = trim_repetitions(seg.text)
+            seg.source_text = normalize_whitespace(seg.source_text)
+            seg.source_text = trim_repetitions(seg.source_text)
+            seg.target_text = normalize_whitespace(seg.target_text)
+            seg.target_text = trim_repetitions(seg.target_text)
 
         merged = merge_short_segments(fused, min_duration=1.0)
 
@@ -150,8 +177,10 @@ class Fusion:
                     "start",
                     "end",
                     "speaker",
-                    "text",
-                    "language",
+                    "source_text",
+                    "target_text",
+                    "source_language",
+                    "target_language",
                     "confidence",
                     "timestamp",
                 ]
@@ -163,8 +192,10 @@ class Fusion:
                         f"{seg.start:.2f}",
                         f"{seg.end:.2f}",
                         seg.speaker or "UNKNOWN",
-                        seg.text,
-                        seg.language,
+                        seg.source_text,
+                        seg.target_text,
+                        seg.source_language,
+                        seg.target_language,
                         f"{seg.confidence:.2f}",
                         f"{seg.timestamp:.2f}",
                     ]
@@ -188,8 +219,10 @@ class Fusion:
                             "start": seg.start,
                             "end": seg.end,
                             "speaker": seg.speaker,
-                            "text": seg.text,
-                            "language": seg.language,
+                            "source_text": seg.source_text,
+                            "target_text": seg.target_text,
+                            "source_language": seg.source_language,
+                            "target_language": seg.target_language,
                             "confidence": seg.confidence,
                             "timestamp": seg.timestamp,
                         },
@@ -220,7 +253,8 @@ class Fusion:
                 f.write(f"{i}\n")
                 f.write(f"{format_timestamp(seg.start)} --> {format_timestamp(seg.end)}\n")
                 speaker_prefix = f"[{seg.speaker}] " if seg.speaker else ""
-                f.write(f"{speaker_prefix}{seg.text}\n\n")
+                text = seg.target_text if seg.target_text else seg.source_text
+                f.write(f"{speaker_prefix}{text}\n\n")
 
         logger.info(f"Exported {len(self._segments)} segments to SRT: {filepath}")
 

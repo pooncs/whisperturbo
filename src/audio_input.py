@@ -19,10 +19,12 @@ class AudioInput:
         dtype: str = CONFIG.DTYPE,
         buffer_duration: float = CONFIG.BUFFER_DURATION,
         chunk_duration: float = CONFIG.CHUNK_DURATION,
+        device: Optional[int] = None,
     ):
         self.sample_rate = sample_rate
         self.channels = channels
         self.dtype = dtype
+        self._device = device
         self.chunk_samples = int(sample_rate * chunk_duration)
         self.buffer_samples = int(sample_rate * buffer_duration)
 
@@ -38,8 +40,8 @@ class AudioInput:
 
         self._vad_options = VadOptions(
             threshold=CONFIG.VAD_THRESHOLD,
-            min_speech_duration_secs=CONFIG.VAD_MIN_SPEECH_DURATION,
-            min_silence_duration_secs=CONFIG.VAD_MIN_SILENCE_DURATION,
+            min_speech_duration_ms=int(CONFIG.VAD_MIN_SPEECH_DURATION * 1000),
+            min_silence_duration_ms=int(CONFIG.VAD_MIN_SILENCE_DURATION * 1000),
         )
 
     @property
@@ -128,6 +130,7 @@ class AudioInput:
         self._buffer_filled = 0
 
         self._stream = sd.InputStream(
+            device=self._device,
             samplerate=self.sample_rate,
             channels=self.channels,
             dtype=self.dtype,

@@ -1,22 +1,26 @@
 # Core Dependencies
-sounddevice>=0.4.6
-faster-whisper>=1.0.0
+sounddevice
+faster-whisper
 pyannote.audio>=3.0.0
 pyannote.pipeline>=3.0.0
 
-# PyTorch - Default installation (likely CUDA 12.x on modern systems)
+# PyTorch - Install with CUDA support for GPU acceleration
+# For CUDA 12.x:
+torch>=2.1.0
+torchaudio>=2.1.0
 # For CUDA 11.8 support, use:
-# pip install torch==2.1.2+cu118 torchaudio==2.1.2+cu118 --index-url https://download.pytorch.org/whl/cu118
-torch>=2.0.0
-torchaudio>=2.0.0
+# torch==2.1.2+cu118 torchaudio==2.1.2+cu118 --index-url https://download.pytorch.org/whl/cu118
 
 # Other Dependencies
-numpy>=1.24.0
-panel>=1.0.0
-pandas>=2.0.0
-silero-vad>=3.0.0
-huggingface_hub>=0.17.0
-tqdm>=4.64.0
-pyinstaller>=6.0.0
-ruff>=0.1.0
-pytest>=7.0.0
+numpy
+panel
+pandas
+silero-vad
+huggingface_hub
+tqdm
+pyinstaller
+ruff
+pytest
+
+# Optional: Gradio for GUI
+gradio>=4.0.0
