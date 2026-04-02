@@ -1,5 +1,23 @@
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+
+def _detect_device() -> str:
+    """Auto-detect CUDA availability, default to CPU."""
+    try:
+        import torch
+        if torch.cuda.is_available():
+            return "cuda"
+    except ImportError:
+        pass
+    return "cpu"
+
+
+def _default_compute_type() -> str:
+    """Return appropriate compute_type for the detected device."""
+    if _detect_device() == "cuda":
+        return "float16"
+    return "int8"
 
 
 @dataclass
@@ -10,11 +28,15 @@ class Config:
     CHUNK_DURATION: float = 0.1
     BUFFER_DURATION: float = 30.0
 
-    # CTranslate2 model: deepdml/faster-whisper-large-v3-turbo-ct2
-    # Use HF model directly for better compatibility
+    # Layered transcription models
+    WHISPER_FAST_MODEL: str = "base"          # fast model for real-time (base or small)
+    WHISPER_CORRECT_MODEL: str = "large-v3-turbo"  # correction model for block passes
+
+    # Legacy single-model field (kept for backward compat, points to correct model)
     WHISPER_MODEL: str = "large-v3-turbo"
-    WHISPER_DEVICE: str = "cuda"
-    WHISPER_COMPUTE_TYPE: str = "float16"
+
+    WHISPER_DEVICE: str = field(default_factory=_detect_device)
+    WHISPER_COMPUTE_TYPE: str = field(default_factory=_default_compute_type)
     WHISPER_TASK: str = "transcribe"  # transcribe in source language first, then translate
     WHISPER_LANGUAGE: str = "auto"  # auto for automatic language detection
 
@@ -25,6 +47,12 @@ class Config:
     WHISPER_INITIAL_PROMPT: str = ""
 
     MIN_PROCESSING_INTERVAL: float = 2.0
+
+    # Correction pass settings
+    CORRECTION_BLOCK_DURATION: float = 5.0  # seconds of audio per correction block
+
+    # Summarization
+    SUMMARY_ENABLED: bool = True
 
     ENABLE_CONTEXT_CARRY: bool = True
     CONTEXT_MAX_LENGTH: int = 500
