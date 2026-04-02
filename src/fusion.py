@@ -82,7 +82,7 @@ class Fusion:
         translated_segments: list[TranscriptionSegment],
         speaker_segments: list[SpeakerSegment],
         timestamp: float,
-        source_language: str = "ko",
+        source_language: str = "",
         target_language: str = "en",
     ) -> list[TranslatedSegment]:
         fused = []
