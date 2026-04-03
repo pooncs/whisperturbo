@@ -16,6 +16,7 @@ numpy
 panel
 pandas
 silero-vad
+websockets
 huggingface_hub
 tqdm
 pyinstaller
