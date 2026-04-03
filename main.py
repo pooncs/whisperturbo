@@ -24,6 +24,8 @@ Korean -> English translation using Faster-Whisper with speaker diarization
 """
 
 import argparse
+import asyncio
+import json
 import logging
 import signal
 import sys
@@ -31,6 +33,9 @@ import threading
 import time
 from pathlib import Path
 from typing import Optional
+
+import websockets
+from websockets.server import WebSocketServerProtocol
 
 PROJECT_ROOT = Path(__file__).parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -370,6 +375,117 @@ class TranslationPipeline:
             self._gui.serve(port=self.gui_port, **kwargs)
 
 
+class WebSocketAudioServer:
+    def __init__(self, pipeline: "TranslationPipeline", host: str = "0.0.0.0", port: int = 8765):
+        self.host = host
+        self.port = port
+        self.pipeline = pipeline
+        self._server = None
+        self._running = False
+
+    async def handle_audio(self, websocket: WebSocketServerProtocol, path: str):
+        client_addr = websocket.remote_address
+        logger.info(f"WebSocket client connected from {client_addr}")
+
+        audio_buffer = bytearray()
+        start_time = time.time()
+
+        try:
+            async for message in websocket:
+                if isinstance(message, bytes):
+                    audio_buffer.extend(message)
+
+                    if len(audio_buffer) >= CONFIG.SAMPLE_RATE * 0.5:
+                        audio_data = self._process_audio_chunk(bytes(audio_buffer))
+                        audio_buffer.clear()
+
+                        if audio_data is not None and len(audio_data) > 0:
+                            await self._transcribe_and_send(websocket, audio_data, start_time)
+                else:
+                    try:
+                        data = json.loads(message)
+                        if data.get("type") == "reset":
+                            audio_buffer.clear()
+                            start_time = time.time()
+                            await websocket.send(json.dumps({"type": "reset", "status": "ok"}))
+                    except json.JSONDecodeError:
+                        pass
+
+        except Exception as e:
+            logger.error(f"WebSocket error: {e}")
+        finally:
+            logger.info(f"WebSocket client disconnected from {client_addr}")
+
+    def _process_audio_chunk(self, audio_bytes: bytes) -> Optional[list]:
+        import struct
+
+        num_samples = len(audio_bytes) // 2
+        audio_data = struct.unpack(f"<{num_samples}h", audio_bytes)
+        audio_array = [float(sample) / 32768.0 for sample in audio_data]
+
+        return audio_array
+
+    async def _transcribe_and_send(self, websocket: WebSocketServerProtocol, audio_data: list, window_start_time: float):
+        if not self.pipeline._whisper or not self.pipeline._whisper._is_loaded:
+            await websocket.send(json.dumps({"error": "pipeline not ready"}))
+            return
+
+        try:
+            timestamp_start = time.time()
+
+            asr_segments, translated_segments = self.pipeline._whisper.transcribe_and_translate(
+                audio_data,
+                window_start_time=window_start_time,
+            )
+
+            if not asr_segments:
+                await websocket.send(json.dumps({"type": "no_speech"}))
+                return
+
+            source_lang = self.pipeline._whisper.language if self.pipeline._whisper.language != "auto" else "ko"
+            target_lang = self.pipeline._whisper.target_language or "en"
+
+            fused_segments = self.pipeline._fusion.fuse(
+                asr_segments,
+                translated_segments,
+                [],
+                timestamp_start,
+                source_language=source_lang,
+                target_language=target_lang,
+            )
+
+            for seg in fused_segments:
+                result = {
+                    "type": "transcription",
+                    "source_text": seg.source_text,
+                    "target_text": seg.target_text,
+                    "start": seg.start,
+                    "end": seg.end,
+                    "source_language": seg.source_language,
+                    "target_language": seg.target_language,
+                    "speaker": seg.speaker,
+                }
+                await websocket.send(json.dumps(result))
+
+        except Exception as e:
+            logger.error(f"Transcription error: {e}")
+            await websocket.send(json.dumps({"error": str(e)}))
+
+    async def start_server(self):
+        logger.info(f"Starting WebSocket server on {self.host}:{self.port}")
+
+        async with websockets.serve(self.handle_audio, self.host, self.port):
+            self._running = True
+            logger.info(f"WebSocket server running on ws://{self.host}:{self.port}")
+            await asyncio.Future()
+
+    def run(self):
+        asyncio.run(self.start_server())
+
+    def stop(self):
+        self._running = False
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Real-Time Korean -> English Speech Translation")
     parser.add_argument(
@@ -387,6 +503,17 @@ def parse_args():
         type=int,
         default=5006,
         help="GUI server port (default: 5006)",
+    )
+    parser.add_argument(
+        "--websocket-port",
+        type=int,
+        default=8765,
+        help="WebSocket audio server port (default: 8765)",
+    )
+    parser.add_argument(
+        "--enable-websocket",
+        action="store_true",
+        help="Enable WebSocket audio server",
     )
     parser.add_argument(
         "--benchmark",
@@ -420,8 +547,17 @@ def main():
         benchmark_mode=args.benchmark,
     )
 
+    ws_server = None
+    if args.enable_websocket:
+        ws_server = WebSocketAudioServer(pipeline, port=args.websocket_port)
+        ws_thread = threading.Thread(target=ws_server.run, daemon=True)
+        ws_thread.start()
+        logger.info(f"WebSocket server started on port {args.websocket_port}")
+
     def signal_handler(sig, frame):
         logger.info("Received shutdown signal")
+        if ws_server:
+            ws_server.stop()
         pipeline.stop()
         sys.exit(0)
 
@@ -438,6 +574,8 @@ def main():
     except KeyboardInterrupt:
         logger.info("Keyboard interrupt received")
     finally:
+        if ws_server:
+            ws_server.stop()
         if pipeline.is_running:
             pipeline.stop()
 

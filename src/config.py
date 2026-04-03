@@ -10,6 +10,9 @@ class Config:
     CHUNK_DURATION: float = 0.1
     BUFFER_DURATION: float = 30.0
 
+    WEBSOCKET_PORT: int = 8765
+    WEBSOCKET_HOST: str = "0.0.0.0"
+
     # CTranslate2 model: deepdml/faster-whisper-large-v3-turbo-ct2
     # Use HF model directly for better compatibility
     WHISPER_MODEL: str = "large-v3-turbo"
