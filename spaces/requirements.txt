@@ -1,0 +1,17 @@
+# WhisperTurbo - HuggingFace Spaces Dependencies
+# CPU version with optimized inference
+
+# Core ML dependencies
+faster-whisper>=1.0.0
+torch>=2.0.0
+torchaudio>=2.0.0
+
+# VAD (Voice Activity Detection)
+silero-vad
+
+# For HF Spaces
+gradio>=4.0.0
+
+# Utilities
+numpy
+huggingface_hub
