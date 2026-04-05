@@ -46,6 +46,11 @@ class Config:
     GUI_REFRESH_RATE: int = 100
     GUI_MAX_ROWS: int = 100
 
+    WEBSOCKET_MODE: bool = False
+    WEBSOCKET_PORT: int = 8765
+    WEBSOCKET_URL: str = ""
+    WEBSOCKET_RECONNECT_INTERVAL: int = 5
+
     EXPORT_FORMATS: tuple = ("csv", "jsonl", "srt")
 
     SPEAKER_COLORS: tuple = (

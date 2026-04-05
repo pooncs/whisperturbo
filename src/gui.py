@@ -118,6 +118,32 @@ class TranslationGUI:
             name="Speaker Filter", options=["All"], value="All"
         )
 
+        self._mode_select = pn.widgets.RadioButtonGroup(
+            name="Mode",
+            options=["Local", "Connect Online"],
+            value="Local",
+            width=200,
+        )
+        self._websocket_url_input = pn.widgets.TextInput(
+            name="WebSocket URL",
+            value=CONFIG.WEBSOCKET_URL,
+            width=400,
+            placeholder="ws://localhost:8765",
+            disabled=True,
+        )
+        self._connect_btn = pn.widgets.Button(
+            name="Connect", button_type="success", width=100, disabled=True
+        )
+        self._disconnect_btn = pn.widgets.Button(
+            name="Disconnect", button_type="danger", width=100, disabled=True
+        )
+        self._connection_status_pane = pn.pane.Markdown(
+            "**Status:** Disconnected", styles={"color": "red"}
+        )
+
+        self._websocket_client = None
+        self._websocket_thread = None
+
         self._active_speakers_pane = pn.pane.Markdown("### Active Speakers\n- None")
 
         self._log_pane = pn.widgets.TextAreaInput(
@@ -153,6 +179,24 @@ class TranslationGUI:
             sizing_mode="stretch_width",
         )
 
+        self._websocket_panel = pn.Column(
+            pn.pane.Markdown("### WebSocket Connection", styles={"font-weight": "bold"}),
+            pn.Row(
+                pn.pane.Markdown("**Mode:**", styles={"font-weight": "bold"}),
+                self._mode_select,
+            ),
+            pn.Row(
+                pn.pane.Markdown("**WebSocket URL:**", styles={"font-weight": "bold"}),
+                self._websocket_url_input,
+            ),
+            pn.Row(
+                self._connect_btn,
+                self._disconnect_btn,
+            ),
+            self._connection_status_pane,
+            sizing_mode="stretch_width",
+        )
+
         self._export_csv_btn.on_click(self._on_export_csv)
         self._export_jsonl_btn.on_click(self._on_export_jsonl)
         self._export_srt_btn.on_click(self._on_export_srt)
@@ -161,6 +205,9 @@ class TranslationGUI:
         self._pause_btn.on_click(self._on_pause)
         self._resume_btn.on_click(self._on_resume)
         self._diarization_toggle.param.watch(self._on_diarization_toggle, "value")
+        self._mode_select.param.watch(self._on_mode_change, "value")
+        self._connect_btn.on_click(self._on_connect)
+        self._disconnect_btn.on_click(self._on_disconnect)
 
         self._status_pane = pn.pane.Markdown("**Status:** Ready", styles={"color": "gray"})
 
@@ -168,6 +215,8 @@ class TranslationGUI:
             self._title,
             pn.layout.Divider(),
             self._kpi_panel,
+            pn.layout.Divider(),
+            self._websocket_panel,
             pn.layout.Divider(),
             self._table,
             pn.layout.Divider(),
@@ -221,7 +270,7 @@ class TranslationGUI:
             for seg in recent_segments:
                 time_str = f"{seg.start:.2f}s - {seg.end:.2f}s"
                 speaker = seg.speaker or "UNKNOWN"
-                text = seg.text
+                text = seg.target_text or seg.source_text
 
                 # Assign colors to speakers
                 if speaker not in self.speaker_colors:
@@ -358,8 +407,116 @@ class TranslationGUI:
             "start_time": self._start_time,
             "whisper_model": CONFIG.WHISPER_MODEL,
             "gui_refresh_rate": CONFIG.GUI_REFRESH_RATE,
+            "websocket_mode": CONFIG.WEBSOCKET_MODE,
+            "websocket_url": CONFIG.WEBSOCKET_URL,
             "export_time": time.time(),
         }
+
+    def _on_mode_change(self, event) -> None:
+        if event.new == "Connect Online":
+            self._websocket_url_input.disabled = False
+            self._connect_btn.disabled = False
+            self._disconnect_btn.disabled = True
+            CONFIG.WEBSOCKET_MODE = True
+            self._connection_status_pane.object = "**Status:** Ready to connect"
+            self._connection_status_pane.styles = {"color": "orange"}
+        else:
+            self._websocket_url_input.disabled = True
+            self._connect_btn.disabled = True
+            self._disconnect_btn.disabled = True
+            if self._websocket_client:
+                self._disconnect_websocket()
+            CONFIG.WEBSOCKET_MODE = False
+            self._connection_status_pane.object = "**Status:** Disconnected"
+            self._connection_status_pane.styles = {"color": "red"}
+        self._append_log(f"Mode changed to {event.new}")
+
+    def _on_connect(self, event) -> None:
+        url = self._websocket_url_input.value or f"ws://localhost:{CONFIG.WEBSOCKET_PORT}"
+        if not url.startswith("ws://"):
+            url = f"ws://{url}"
+        CONFIG.WEBSOCKET_URL = url
+        self._connect_websocket(url)
+
+    def _on_disconnect(self, event) -> None:
+        self._disconnect_websocket()
+
+    def _connect_websocket(self, url: str) -> None:
+        try:
+            import websocket
+
+            self._websocket_client = websocket.WebSocketApp(
+                url,
+                on_message=self._on_websocket_message,
+                on_error=self._on_websocket_error,
+                on_open=self._on_websocket_open,
+                on_close=self._on_websocket_close,
+            )
+            self._websocket_thread = threading.Thread(
+                target=self._websocket_client.run_forever, daemon=True
+            )
+            self._websocket_thread.start()
+            self._connection_status_pane.object = f"**Status:** Connecting to {url}..."
+            self._connection_status_pane.styles = {"color": "orange"}
+            self._append_log(f"Connecting to WebSocket: {url}")
+        except Exception as e:
+            logger.error(f"WebSocket connection error: {e}")
+            self._connection_status_pane.object = f"**Status:** Connection failed - {e}"
+            self._connection_status_pane.styles = {"color": "red"}
+            self._append_log(f"WebSocket connection failed: {e}")
+
+    def _disconnect_websocket(self) -> None:
+        if self._websocket_client:
+            self._websocket_client.close()
+            self._websocket_client = None
+            self._websocket_thread = None
+            self._connection_status_pane.object = "**Status:** Disconnected"
+            self._connection_status_pane.styles = {"color": "red"}
+            self._connect_btn.disabled = False
+            self._disconnect_btn.disabled = True
+            self._append_log("Disconnected from WebSocket")
+
+    def _on_websocket_message(self, ws, message) -> None:
+        try:
+            import json
+
+            data = json.loads(message)
+            if "text" in data and "start" in data and "end" in data:
+                from .fusion import TranslatedSegment
+
+                segment = TranslatedSegment(
+                    start=data["start"],
+                    end=data["end"],
+                    source_text=data.get("source_text", ""),
+                    target_text=data.get("text", data.get("source_text", "")),
+                    source_language=data.get("source_language", ""),
+                    target_language=data.get("target_language", "en"),
+                    speaker=data.get("speaker", "UNKNOWN"),
+                )
+                self.add_segment(segment)
+                self._append_log(f"Received: {data['text'][:50]}...")
+        except Exception as e:
+            logger.error(f"WebSocket message error: {e}")
+
+    def _on_websocket_error(self, ws, error) -> None:
+        logger.error(f"WebSocket error: {error}")
+        self._connection_status_pane.object = f"**Status:** Error - {error}"
+        self._connection_status_pane.styles = {"color": "red"}
+        self._append_log(f"WebSocket error: {error}")
+
+    def _on_websocket_open(self, ws) -> None:
+        self._connection_status_pane.object = "**Status:** Connected"
+        self._connection_status_pane.styles = {"color": "green"}
+        self._connect_btn.disabled = True
+        self._disconnect_btn.disabled = False
+        self._append_log("WebSocket connected")
+
+    def _on_websocket_close(self, ws, close_status_code, close_msg) -> None:
+        self._connection_status_pane.object = "**Status:** Disconnected"
+        self._connection_status_pane.styles = {"color": "red"}
+        self._connect_btn.disabled = False
+        self._disconnect_btn.disabled = True
+        self._append_log(f"WebSocket closed: {close_status_code} - {close_msg}")
 
     def show(self, port: int = 5006, show: bool = True) -> None:
         self._is_running = True

@@ -21,6 +21,7 @@ tqdm
 pyinstaller
 ruff
 pytest
+websocket-client
 
 # Optional: Gradio for GUI
 gradio>=4.0.0
