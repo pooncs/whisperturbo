@@ -25,3 +25,6 @@ websocket-client
 
 # Optional: Gradio for GUI
 gradio>=4.0.0
+
+# WebSocket server for browser microphone
+websockets>=12.0

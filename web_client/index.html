@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhisperTurbo - Real-Time Translation</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            color: #fff;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        header {
+            text-align: center;
+            padding: 30px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 16px;
+            margin-bottom: 24px;
+        }
+        
+        header h1 {
+            font-size: 2.5em;
+            margin-bottom: 8px;
+        }
+        
+        header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+        
+        .controls {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 24px;
+        }
+        
+        .panel {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 20px;
+            backdrop-filter: blur(10px);
+        }
+        
+        .panel h2 {
+            font-size: 1.2em;
+            margin-bottom: 16px;
+            color: #a5b4fc;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+        }
+        
+        select, input {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.1);
+            color: #fff;
+            font-size: 14px;
+            margin-bottom: 12px;
+        }
+        
+        select:focus, input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .btn-group {
+            display: flex;
+            gap: 12px;
+            margin-top: 16px;
+        }
+        
+        button {
+            flex: 1;
+            padding: 14px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .btn-start {
+            background: #10b981;
+            color: white;
+        }
+        
+        .btn-start:hover {
+            background: #059669;
+        }
+        
+        .btn-start:disabled {
+            background: #4b5563;
+            cursor: not-allowed;
+        }
+        
+        .btn-stop {
+            background: #ef4444;
+            color: white;
+        }
+        
+        .btn-stop:hover {
+            background: #dc2626;
+        }
+        
+        .btn-stop:disabled {
+            background: #4b5563;
+            cursor: not-allowed;
+        }
+        
+        .status {
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin-top: 16px;
+            font-weight: 500;
+        }
+        
+        .status.ready {
+            background: rgba(107, 114, 128, 0.3);
+        }
+        
+        .status.recording {
+            background: rgba(16, 185, 129, 0.3);
+            animation: pulse 1s infinite;
+        }
+        
+        .status.error {
+            background: rgba(239, 68, 68, 0.3);
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+        
+        .audio-meter {
+            width: 100%;
+            height: 8px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 12px;
+        }
+        
+        .audio-meter-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #10b981, #f59e0b, #ef4444);
+            width: 0%;
+            transition: width 0.1s;
+        }
+        
+        .transcription {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 20px;
+        }
+        
+        .transcription h2 {
+            margin-bottom: 16px;
+        }
+        
+        .segment {
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 8px;
+            background: rgba(255, 255, 255, 0.05);
+        }
+        
+        .segment-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            font-size: 0.9em;
+            color: #9ca3af;
+        }
+        
+        .speaker {
+            color: #a5b4fc;
+            font-weight: 600;
+        }
+        
+        .source-text {
+            margin-bottom: 8px;
+            color: #e5e7eb;
+        }
+        
+        .target-text {
+            color: #10b981;
+            font-weight: 500;
+            padding-left: 12px;
+            border-left: 3px solid #10b981;
+        }
+        
+        .metrics {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 16px;
+            margin-top: 16px;
+        }
+        
+        .metric {
+            background: rgba(255, 255, 255, 0.05);
+            padding: 16px;
+            border-radius: 8px;
+            text-align: center;
+        }
+        
+        .metric-value {
+            font-size: 1.5em;
+            font-weight: 700;
+            color: #667eea;
+        }
+        
+        .metric-label {
+            font-size: 0.9em;
+            color: #9ca3af;
+            margin-top: 4px;
+        }
+        
+        .connection-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 12px;
+        }
+        
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #6b7280;
+        }
+        
+        .status-dot.connected {
+            background: #10b981;
+        }
+        
+        .status-dot.disconnected {
+            background: #ef4444;
+        }
+        
+        .status-dot.connecting {
+            background: #f59e0b;
+            animation: blink 1s infinite;
+        }
+        
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>WhisperTurbo</h1>
+            <p>Real-Time Speech Translation with Speaker Diarization</p>
+        </header>
+        
+        <div class="controls">
+            <div class="panel">
+                <h2>Connection</h2>
+                <div class="connection-status">
+                    <div class="status-dot" id="connectionDot"></div>
+                    <span id="connectionStatus">Disconnected</span>
+                </div>
+                <div class="status ready" id="mainStatus">Ready</div>
+            </div>
+            
+            <div class="panel">
+                <h2>Languages</h2>
+                <label for="sourceLang">Source Language</label>
+                <select id="sourceLang">
+                    <option value="auto">Auto-detect</option>
+                    <option value="ko">Korean</option>
+                    <option value="ja">Japanese</option>
+                    <option value="zh">Chinese</option>
+                    <option value="en">English</option>
+                    <option value="es">Spanish</option>
+                    <option value="fr">French</option>
+                    <option value="de">German</option>
+                    <option value="ru">Russian</option>
+                </select>
+                
+                <label for="targetLang">Target Language</label>
+                <select id="targetLang">
+                    <option value="en" selected>English</option>
+                    <option value="ko">Korean</option>
+                    <option value="ja">Japanese</option>
+                    <option value="zh">Chinese</option>
+                    <option value="es">Spanish</option>
+                    <option value="fr">French</option>
+                    <option value="de">German</option>
+                </select>
+            </div>
+            
+            <div class="panel">
+                <h2>Recording</h2>
+                <div class="btn-group">
+                    <button class="btn-start" id="startBtn">Start Recording</button>
+                    <button class="btn-stop" id="stopBtn" disabled>Stop</button>
+                </div>
+                <div class="audio-meter">
+                    <div class="audio-meter-fill" id="audioMeter"></div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="panel metrics">
+            <div class="metric">
+                <div class="metric-value" id="latency">0.0s</div>
+                <div class="metric-label">Latency</div>
+            </div>
+            <div class="metric">
+                <div class="metric-value" id="rtf">0.0x</div>
+                <div class="metric-label">RTF</div>
+            </div>
+            <div class="metric">
+                <div class="metric-value" id="segments">0</div>
+                <div class="metric-label">Segments</div>
+            </div>
+            <div class="metric">
+                <div class="metric-value" id="speakers">0</div>
+                <div class="metric-label">Speakers</div>
+            </div>
+        </div>
+        
+        <div class="transcription">
+            <h2>Live Transcription & Translation</h2>
+            <div id="transcriptionContainer">
+                <p style="color: #9ca3af; text-align: center; padding: 40px;">
+                    Start recording to see transcription results
+                </p>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${wsProtocol}//${window.location.host}`;
+        
+        let ws = null;
+        let mediaRecorder = null;
+        let audioContext = null;
+        let analyser = null;
+        let isRecording = false;
+        
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const mainStatus = document.getElementById('mainStatus');
+        const audioMeter = document.getElementById('audioMeter');
+        const connectionDot = document.getElementById('connectionDot');
+        const connectionStatus = document.getElementById('connectionStatus');
+        const transcriptionContainer = document.getElementById('transcriptionContainer');
+        
+        function updateConnectionStatus(connecting) {
+            if (connecting) {
+                connectionDot.className = 'status-dot connecting';
+                connectionStatus.textContent = 'Connecting...';
+            } else if (ws && ws.readyState === WebSocket.OPEN) {
+                connectionDot.className = 'status-dot connected';
+                connectionStatus.textContent = 'Connected';
+            } else {
+                connectionDot.className = 'status-dot disconnected';
+                connectionStatus.textContent = 'Disconnected';
+            }
+        }
+        
+        function connect() {
+            updateConnectionStatus(true);
+            ws = new WebSocket(wsUrl);
+            
+            ws.onopen = () => {
+                console.log('WebSocket connected');
+                updateConnectionStatus(false);
+            };
+            
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    handleMessage(data);
+                } catch (e) {
+                    console.error('Failed to parse message:', e);
+                }
+            };
+            
+            ws.onclose = () => {
+                console.log('WebSocket disconnected');
+                updateConnectionStatus(false);
+                if (isRecording) {
+                    stopRecording();
+                }
+            };
+            
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+                setStatus('error', 'Connection error');
+            };
+        }
+        
+        function handleMessage(data) {
+            if (data.type === 'transcript') {
+                updateTranscription(data.segments);
+                updateMetrics(data.metrics);
+            } else if (data.type === 'error') {
+                setStatus('error', data.message);
+            }
+        }
+        
+        function updateTranscription(segments) {
+            if (!segments || segments.length === 0) {
+                return;
+            }
+            
+            transcriptionContainer.innerHTML = segments.map(seg => `
+                <div class="segment">
+                    <div class="segment-header">
+                        <span class="speaker">${seg.speaker || 'Speaker'}</span>
+                        <span>${seg.start.toFixed(1)}s - ${seg.end.toFixed(1)}s</span>
+                    </div>
+                    <div class="source-text">${seg.source_text || ''}</div>
+                    <div class="target-text">${seg.target_text || seg.source_text || ''}</div>
+                </div>
+            `).join('');
+        }
+        
+        function updateMetrics(metrics) {
+            document.getElementById('latency').textContent = 
+                metrics.latency ? `${metrics.latency.toFixed(2)}s` : '0.0s';
+            document.getElementById('rtf').textContent = 
+                metrics.rtf ? `${metrics.rtf.toFixed(2)}x` : '0.0x';
+            document.getElementById('segments').textContent = 
+                metrics.segments || '0';
+            document.getElementById('speakers').textContent = 
+                metrics.speakers || '0';
+        }
+        
+        function setStatus(type, message) {
+            mainStatus.className = `status ${type}`;
+            mainStatus.textContent = message;
+        }
+        
+        async function startRecording() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: {
+                        sampleRate: 16000,
+                        channelCount: 1,
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true
+                    } 
+                });
+                
+                audioContext = new AudioContext({ sampleRate: 16000 });
+                const source = audioContext.createMediaStreamSource(stream);
+                analyser = audioContext.createAnalyser();
+                analyser.fftSize = 256;
+                source.connect(analyser);
+                
+                const audioData = new Uint8Array(analyser.frequencyBinCount);
+                
+                function updateMeter() {
+                    if (analyser) {
+                        analyser.getByteFrequencyData(audioData);
+                        const average = audioData.reduce((a, b) => a + b) / audioData.length;
+                        const level = Math.min(100, (average / 128) * 100);
+                        audioMeter.style.width = `${level}%`;
+                    }
+                    if (isRecording) {
+                        requestAnimationFrame(updateMeter);
+                    }
+                }
+                updateMeter();
+                
+                mediaRecorder = new MediaRecorder(stream, {
+                    mimeType: 'audio/webm;codecs=opus'
+                });
+                
+                const chunks = [];
+                
+                mediaRecorder.ondataavailable = (event) => {
+                    if (event.data.size > 0) {
+                        chunks.push(event.data);
+                    }
+                };
+                
+                mediaRecorder.onstop = () => {
+                    const blob = new Blob(chunks, { type: 'audio/webm' });
+                    const reader = new FileReader();
+                    reader.onloadend = () => {
+                        if (ws && ws.readyState === WebSocket.OPEN) {
+                            ws.send(JSON.stringify({
+                                type: 'audio_end',
+                                data: reader.result
+                            }));
+                        }
+                    };
+                    reader.readAsDataURL(blob);
+                };
+                
+                mediaRecorder.start(100);
+                
+                const sampleRate = 16000;
+                const bufferSize = 4000;
+                let audioBuffer = [];
+                
+                const processor = audioContext.createScriptProcessor(bufferSize, 1, 1);
+                source.connect(processor);
+                processor.connect(audioContext.destination);
+                
+                processor.onaudioprocess = (event) => {
+                    if (!isRecording) return;
+                    
+                    const inputBuffer = event.inputBuffer;
+                    const channelData = inputBuffer.getChannelData(0);
+                    const float32Data = new Float32Array(channelData);
+                    
+                    let sum = 0;
+                    for (let i = 0; i < float32Data.length; i++) {
+                        sum += Math.abs(float32Data[i]);
+                    }
+                    const avg = sum / float32Data.length;
+                    if (avg > 0.01 && ws && ws.readyState === WebSocket.OPEN) {
+                        const base64 = btoa(String.fromCharCode.apply(null, new Uint8Array(float32Data.buffer)));
+                        ws.send(JSON.stringify({
+                            type: 'audio_chunk',
+                            data: base64,
+                            sampleRate: sampleRate
+                        }));
+                    }
+                };
+                
+                isRecording = true;
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                
+                if (ws && ws.readyState !== WebSocket.OPEN) {
+                    connect();
+                }
+                
+                setTimeout(() => {
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify({
+                            type: 'start',
+                            sourceLang: document.getElementById('sourceLang').value,
+                            targetLang: document.getElementById('targetLang').value
+                        }));
+                        setStatus('recording', 'Recording...');
+                    }
+                }, 500);
+                
+            } catch (error) {
+                console.error('Failed to start recording:', error);
+                setStatus('error', `Error: ${error.message}`);
+            }
+        }
+        
+        function stopRecording() {
+            isRecording = false;
+            
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
+            }
+            
+            if (audioContext) {
+                audioContext.close();
+                audioContext = null;
+            }
+            
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'stop' }));
+            }
+            
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+            audioMeter.style.width = '0%';
+            setStatus('ready', 'Ready');
+        }
+        
+        startBtn.addEventListener('click', startRecording);
+        stopBtn.addEventListener('click', stopRecording);
+        
+        connect();
+    </script>
+</body>
+</html>

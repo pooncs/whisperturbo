@@ -24,11 +24,15 @@ Korean -> English translation using Faster-Whisper with speaker diarization
 """
 
 import argparse
+import asyncio
+import json
 import logging
 import signal
 import sys
 import threading
 import time
+import base64
+import struct
 from pathlib import Path
 from typing import Optional
 
@@ -36,6 +40,8 @@ PROJECT_ROOT = Path(__file__).parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+import numpy as np
+import websockets
 from src.audio_input import AudioInput
 from src.config import CONFIG
 from src.diarization import DiarizationHandler, SpeakerSegment
@@ -116,6 +122,154 @@ class TranslationPipeline:
         if self.enable_gui:
             self._gui = GradioGUI(self._fusion, pipeline=self)
             logger.info("GradioGUI initialized")
+
+        self._ws_port = 8765
+        self._audio_buffer = []
+        self._source_language = "auto"
+        self._target_language = "en"
+        self._ws_running = False
+        self._cached_speaker_segments: list[SpeakerSegment] = []
+
+    def set_languages(self, source_lang: str, target_lang: str):
+        """Set source and target languages for transcription."""
+        self._source_language = source_lang
+        self._target_language = target_lang
+        logger.info(f"Languages set: {source_lang} -> {target_lang}")
+
+    async def _handle_websocket(self, websocket, path):
+        client_ip = websocket.remote_address
+        logger.info(f"WebSocket client connected: {client_ip}")
+
+        try:
+            async for message in websocket:
+                try:
+                    data = json.loads(message)
+                    msg_type = data.get("type")
+
+                    if msg_type == "start":
+                        self._source_language = data.get("sourceLang", "auto")
+                        self._target_language = data.get("targetLang", "en")
+                        logger.info(f"Starting WS transcription: {self._source_language} -> {self._target_language}")
+
+                        if hasattr(self, "set_languages"):
+                            self.set_languages(self._source_language, self._target_language)
+
+                        if self._whisper and not self._whisper.is_loaded():
+                            self._whisper.load_model()
+                            if self._diarization:
+                                self._diarization.load_pipeline()
+
+                        self._audio_buffer = []
+                        await websocket.send(json.dumps({"type": "started"}))
+
+                    elif msg_type == "audio_chunk":
+                        audio_data = data.get("data")
+                        if audio_data:
+                            try:
+                                audio_bytes = base64.b64decode(audio_data)
+                                audio_array = struct.unpack(f"{len(audio_bytes)//4}f", audio_bytes)
+                                self._audio_buffer.extend(audio_array)
+
+                                if len(self._audio_buffer) >= CONFIG.SAMPLE_RATE * 3:
+                                    await self._process_ws_audio(websocket)
+                            except Exception as e:
+                                logger.error(f"Audio decode error: {e}")
+
+                    elif msg_type == "stop":
+                        logger.info("Stopping WS transcription")
+                        if self._audio_buffer:
+                            await self._process_ws_audio(websocket)
+                        self._audio_buffer = []
+                        await websocket.send(json.dumps({"type": "stopped"}))
+
+                except json.JSONDecodeError:
+                    logger.error("Invalid JSON message")
+                except Exception as e:
+                    logger.error(f"WebSocket error: {e}")
+                    await websocket.send(json.dumps({"type": "error", "message": str(e)}))
+
+        except websockets.exceptions.ConnectionClosed:
+            logger.info(f"WebSocket client disconnected: {client_ip}")
+        except Exception as e:
+            logger.error(f"WebSocket handler error: {e}")
+
+    async def _process_ws_audio(self, websocket):
+        if not self._audio_buffer or len(self._audio_buffer) < CONFIG.SAMPLE_RATE * 0.5:
+            return
+
+        audio = np.array(self._audio_buffer, dtype=np.float32)
+        self._audio_buffer = []
+
+        max_amp = np.max(np.abs(audio))
+        if max_amp < 0.005:
+            return
+
+        window_start_time = time.time() - 3.0
+
+        timestamp_start = time.time()
+        asr_segments, translated_segments = self._whisper.transcribe_and_translate(
+            audio,
+            window_start_time=window_start_time,
+        )
+        processing_time = time.time() - timestamp_start
+
+        if not asr_segments:
+            return
+
+        fused_segments = self._fusion.fuse(
+            asr_segments,
+            translated_segments,
+            self._cached_speaker_segments if self._diarization else [],
+            timestamp_start,
+            self._source_language,
+            self._target_language,
+        )
+
+        latency = processing_time
+        rtf = processing_time / 3.0 if audio.shape[0] > 0 else 0
+
+        segments_data = []
+        for seg in fused_segments:
+            segments_data.append({
+                "start": seg.start,
+                "end": seg.end,
+                "speaker": seg.speaker,
+                "source_text": seg.source_text,
+                "target_text": seg.target_text,
+                "source_language": seg.source_language,
+                "target_language": seg.target_language,
+            })
+
+        stats = self._fusion.get_stats()
+        metrics = {
+            "latency": latency,
+            "rtf": rtf,
+            "segments": stats["total_segments"],
+            "speakers": stats["unique_speakers"],
+        }
+
+        await websocket.send(json.dumps({
+            "type": "transcript",
+            "segments": segments_data,
+            "metrics": metrics,
+        }))
+
+    async def _run_websocket_server(self):
+        logger.info(f"Starting WebSocket server on port {self._ws_port}")
+        self._ws_running = True
+        async with websockets.serve(self._handle_websocket, "0.0.0.0", self._ws_port):
+            while self._ws_running:
+                await asyncio.sleep(1)
+        logger.info("WebSocket server stopped")
+
+    def start_websocket_server(self):
+        if not hasattr(self, '_ws_thread') or not self._ws_thread.is_alive():
+            self._ws_thread = threading.Thread(target=self._run_ws_event_loop, daemon=True)
+            self._ws_thread.start()
+            logger.info("WebSocket server thread started")
+
+    def _run_ws_event_loop(self):
+        asyncio.run(self._run_websocket_server())
 
     def start(self) -> None:
         if self._running:
