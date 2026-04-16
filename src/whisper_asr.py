@@ -35,7 +35,7 @@ class WhisperASR:
         compute_type: str = CONFIG.WHISPER_COMPUTE_TYPE,
         task: str = CONFIG.WHISPER_TASK,
         language: str = CONFIG.WHISPER_LANGUAGE,
-        target_language: str = "en",
+        target_language: str = CONFIG.WHISPER_TARGET_LANGUAGE,
     ):
         self.model_name = model_name
         self.device = device

@@ -17,11 +17,12 @@ class TestConfig:
         assert config.CHUNK_DURATION == 0.1
         assert config.BUFFER_DURATION == 30.0
 
-        assert config.WHISPER_MODEL == "deepdml/faster-whisper-large-v3-turbo-ct2"
-        assert config.WHISPER_DEVICE == "cuda"
-        assert config.WHISPER_COMPUTE_TYPE == "float16"
-        assert config.WHISPER_TASK == "translate"
-        assert config.WHISPER_LANGUAGE == "ko"
+        assert config.WHISPER_FAST_MODEL == "base"
+        assert config.WHISPER_CORRECT_MODEL == "large-v3-turbo"
+        assert config.WHISPER_MODEL == "large-v3-turbo"
+        assert config.WHISPER_TASK == "transcribe"
+        assert config.WHISPER_LANGUAGE == "auto"
+        assert config.WHISPER_TARGET_LANGUAGE == "en"
 
         assert config.WHISPER_BEAM_SIZE == 5
         assert config.WHISPER_NO_SPEECH_THRESHOLD == 0.6
@@ -33,9 +34,9 @@ class TestConfig:
         assert config.DIARIZATION_WINDOW_SIZE == 15.0
         assert config.DIARIZATION_OVERLAP == 5.0
 
-        assert config.VAD_THRESHOLD == 0.5
+        assert config.VAD_THRESHOLD == 0.3
         assert config.VAD_MIN_SPEECH_DURATION == 0.1
-        assert config.VAD_MIN_SILENCE_DURATION == 0.5
+        assert config.VAD_MIN_SILENCE_DURATION == 0.3
 
         assert config.GUI_REFRESH_RATE == 100
         assert config.GUI_MAX_ROWS == 100

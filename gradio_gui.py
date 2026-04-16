@@ -21,27 +21,50 @@ DEFAULT_HF_TOKEN = ""
 if not os.environ.get("HF_TOKEN"):
     os.environ["HF_TOKEN"] = DEFAULT_HF_TOKEN
 
-# Language options
+# Language options - Expanded to all major languages
 SOURCE_LANGUAGES = [
     ("Auto-detect", "auto"),
     ("Korean", "ko"),
     ("Japanese", "ja"),
-    ("Chinese", "zh"),
+    ("Chinese (Simplified)", "zh"),
     ("English", "en"),
     ("Spanish", "es"),
     ("French", "fr"),
     ("German", "de"),
     ("Russian", "ru"),
+    ("Portuguese", "pt"),
+    ("Italian", "it"),
+    ("Arabic", "ar"),
+    ("Hindi", "hi"),
+    ("Thai", "th"),
+    ("Vietnamese", "vi"),
+    ("Indonesian", "id"),
+    ("Dutch", "nl"),
+    ("Polish", "pl"),
+    ("Turkish", "tr"),
+    ("Ukrainian", "uk"),
 ]
 
 TARGET_LANGUAGES = [
     ("English", "en"),
     ("Korean", "ko"),
     ("Japanese", "ja"),
-    ("Chinese", "zh"),
+    ("Chinese (Simplified)", "zh"),
     ("Spanish", "es"),
     ("French", "fr"),
     ("German", "de"),
+    ("Russian", "ru"),
+    ("Portuguese", "pt"),
+    ("Italian", "it"),
+    ("Arabic", "ar"),
+    ("Hindi", "hi"),
+    ("Thai", "th"),
+    ("Vietnamese", "vi"),
+    ("Indonesian", "id"),
+    ("Dutch", "nl"),
+    ("Polish", "pl"),
+    ("Turkish", "tr"),
+    ("Ukrainian", "uk"),
 ]
 
 
@@ -50,6 +73,7 @@ class GradioGUI:
         self.fusion = fusion
         self.pipeline = pipeline
         self._is_running = False
+        self._correction_running = False
         self._audio_level = 0.0
         self._segments_buffer = []
         self._segments_lock = threading.Lock()
@@ -215,15 +239,16 @@ class GradioGUI:
             """Get current transcription data with source and target text."""
             segments = []
             try:
-                if self.fusion and hasattr(self.fusion, "_segments"):
-                    all_seg = list(self.fusion._segments[-self._max_segments :])
+                if self.fusion and hasattr(self.fusion, "_pending_segments"):
+                    all_seg = list(self.fusion._pending_segments[-self._max_segments :])
 
                     for seg in all_seg:
                         time_str = f"{seg.start:.1f}s - {seg.end:.1f}s"
                         speaker = seg.speaker or "Speaker"
                         source = seg.source_text or ""
                         target = seg.target_text or source
-                        segments.append([time_str, speaker, source, target])
+                        correction = seg.correction_status or "fast"
+                        segments.append([time_str, speaker, source, target, correction])
             except Exception:
                 pass
 
@@ -237,8 +262,9 @@ class GradioGUI:
                 speakers = str(len(unique_speakers))
 
             audio_level = f"{self._audio_level:.4f}"
+            correction_status = "Running" if self._correction_running else "Idle"
 
-            return segments, latency, rtf, segments_count, speakers, audio_level
+            return segments, latency, rtf, segments_count, speakers, audio_level, correction_status
 
         def export_transcript():
             """Export transcript as markdown file."""
@@ -251,25 +277,34 @@ class GradioGUI:
                 )
 
                 segments = []
-                if self.fusion and hasattr(self.fusion, "_segments"):
-                    segments = list(self.fusion._segments)
+                if self.fusion and hasattr(self.fusion, "_pending_segments"):
+                    segments = list(self.fusion._pending_segments)
 
                 with open(export_path, "w", encoding="utf-8") as f:
                     f.write(f"# WhisperTurbo Transcript\n\n")
                     f.write(f"**Exported**: {datetime.now()}\n")
                     f.write(f"**Segments**: {len(segments)}\n\n")
-                    f.write(f"| Time | Speaker | Source | Translation |\n")
-                    f.write(f"|------|---------|--------|-------------|\n")
+                    f.write(f"| Time | Speaker | Source | Translation | Status |\n")
+                    f.write(f"|------|---------|--------|-------------|--------|\n")
                     for seg in segments:
                         time_str = f"{seg.start:.1f}s - {seg.end:.1f}s"
                         speaker = seg.speaker or "Speaker"
                         source = seg.source_text or ""
                         target = seg.target_text or source
-                        f.write(f"| {time_str} | {speaker} | {source} | {target} |\n")
+                        status = seg.correction_status or "fast"
+                        f.write(f"| {time_str} | {speaker} | {source} | {target} | {status} |\n")
 
                 return f"Exported to: {export_path}"
             except Exception as e:
                 return f"Export error: {e}"
+
+        def on_generate_summary():
+            """Generate summary from current transcription data."""
+            summary = self.generate_summary()
+            key_points = summary.get("key_points", "No data")
+            speaker_contrib = summary.get("speaker_contributions", "No data")
+            full_summary = summary.get("full_summary", "No data")
+            return key_points, speaker_contrib, full_summary
 
         def refresh_devices():
             self.devices = self._get_active_audio_devices()
@@ -371,6 +406,10 @@ class GradioGUI:
                         label="Audio Level", value="0.0000", scale=1
                     )
 
+                    correction_status_box = gr.Textbox(
+                        label="Correction", value="Idle", scale=1
+                    )
+
                     gr.Markdown("### Export")
                     export_btn = gr.Button(
                         "Export Transcript", variant="secondary", size="sm"
@@ -388,11 +427,11 @@ class GradioGUI:
                 refresh_btn = gr.Button("Refresh Now", size="sm", scale=1)
 
             transcription_table = gr.Dataframe(
-                headers=["Time", "Speaker", "Transcription", "Translation"],
+                headers=["Time", "Speaker", "Transcription", "Translation", "Status"],
                 value=[],
                 max_height=500,
                 wrap=True,
-                column_widths=["12%", "10%", "39%", "39%"],
+                column_widths=["10%", "8%", "32%", "32%", "18%"],
                 interactive=False,
             )
 
@@ -412,6 +451,7 @@ class GradioGUI:
                     segments_box,
                     speakers_box,
                     audio_level_box,
+                    correction_status_box,
                 ],
             )
             test_levels_btn.click(fn=test_audio_levels, outputs=[audio_levels_output])
@@ -428,6 +468,7 @@ class GradioGUI:
                     segments_box,
                     speakers_box,
                     audio_level_box,
+                    correction_status_box,
                 ],
             )
 
@@ -440,7 +481,44 @@ class GradioGUI:
                     segments_box,
                     speakers_box,
                     audio_level_box,
+                    correction_status_box,
                 ],
+            )
+
+            gr.Markdown("---")
+
+            with gr.Row():
+                generate_summary_btn = gr.Button(
+                    "Generate Summary", variant="secondary", size="sm", scale=1
+                )
+
+            with gr.Row():
+                with gr.Column(scale=1):
+                    gr.Markdown("### Key Points")
+                    key_points_output = gr.Textbox(
+                        lines=6,
+                        interactive=False,
+                        placeholder="Click 'Generate Summary' after stopping...",
+                    )
+                with gr.Column(scale=1):
+                    gr.Markdown("### Speaker Contributions")
+                    speaker_contrib_output = gr.Textbox(
+                        lines=6,
+                        interactive=False,
+                        placeholder="Click 'Generate Summary' after stopping...",
+                    )
+
+            gr.Markdown("### Full Summary")
+            with gr.Accordion("Show Full Transcript Summary", open=False):
+                full_summary_output = gr.Textbox(
+                    lines=10,
+                    interactive=False,
+                    placeholder="Click 'Generate Summary' after stopping...",
+                )
+
+            generate_summary_btn.click(
+                fn=on_generate_summary,
+                outputs=[key_points_output, speaker_contrib_output, full_summary_output],
             )
 
         return demo
@@ -455,6 +533,76 @@ class GradioGUI:
             "rtf": rtf,
             "segments": self._metrics.get("segments", 0) + 1,
             "speakers": self._metrics.get("speakers", 0),
+        }
+
+    def set_correction_running(self, is_running: bool) -> None:
+        self._correction_running = is_running
+
+    def generate_summary(self) -> dict:
+        """Generate summary from transcription segments."""
+        segments = []
+        try:
+            if self.fusion and hasattr(self.fusion, "_pending_segments"):
+                segments = list(self.fusion._pending_segments)
+        except Exception:
+            pass
+
+        if not segments:
+            return {
+                "key_points": "No transcription data available.",
+                "speaker_contributions": "No speakers detected.",
+                "full_summary": "No transcription data available.",
+            }
+
+        # Key points - extract unique sentences/phrases
+        key_points = []
+        seen_texts = set()
+        for seg in segments:
+            text = seg.target_text or seg.source_text
+            if text and text not in seen_texts and len(text) > 10:
+                seen_texts.add(text)
+                key_points.append(f"• {text[:100]}{'...' if len(text) > 100 else ''}")
+
+        if len(key_points) > 5:
+            key_points = key_points[:5]
+
+        # Speaker contributions
+        speaker_times = {}
+        for seg in segments:
+            speaker = seg.speaker or "Unknown"
+            if speaker not in speaker_times:
+                speaker_times[speaker] = {"count": 0, "duration": 0.0}
+            speaker_times[speaker]["count"] += 1
+            speaker_times[speaker]["duration"] += seg.end - seg.start
+
+        speaker_contributions = []
+        for speaker, stats in sorted(speaker_times.items(), key=lambda x: x[1]["duration"], reverse=True):
+            duration = stats["duration"]
+            minutes = int(duration // 60)
+            seconds = int(duration % 60)
+            speaker_contributions.append(
+                f"• {speaker}: {stats['count']} segments, {minutes}m {seconds}s"
+            )
+
+        # Full summary - grouped by speaker
+        full_summary_parts = []
+        current_speaker = None
+        for seg in segments:
+            speaker = seg.speaker or "Unknown"
+            if speaker != current_speaker:
+                if full_summary_parts:
+                    full_summary_parts.append("")
+                full_summary_parts.append(f"[{speaker}]")
+                current_speaker = speaker
+
+            text = seg.target_text or seg.source_text
+            if text:
+                full_summary_parts.append(f"  {text}")
+
+        return {
+            "key_points": "\n".join(key_points) if key_points else "No key points extracted.",
+            "speaker_contributions": "\n".join(speaker_contributions) if speaker_contributions else "No speakers detected.",
+            "full_summary": "\n".join(full_summary_parts) if full_summary_parts else "No summary available.",
         }
 
     def add_segments(self, segments):
